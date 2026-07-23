@@ -1,0 +1,14 @@
+{
+  "index_patterns": ["web-shop-logs-*", "payments-logs-*"],
+  "template": {
+    "settings": { "number_of_shards": 1, "index.lifecycle.name": "webshop-ilm" },
+    "mappings": {
+      "properties": {
+        "@timestamp": { "type": "date" },
+        "level": { "type": "keyword" },
+        "service": { "properties": { "name": { "type": "keyword" } } },
+        "http": { "properties": { "response_time_ms": { "type": "long" } } }
+      }
+    }
+  }
+}

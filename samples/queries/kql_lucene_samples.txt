@@ -1,0 +1,4 @@
+service.name : "web-shop" and level : ("ERROR" or "WARN")
+http.response.status_code >= 500 and not deployment.environment : "test"
+"payment.status.keyword": "FAILED" and payment.provider : acme*
+level:ERROR AND service.name:payments

@@ -1,0 +1,21 @@
+{
+  "source": { "index": ["web-shop-logs-*"] },
+  "dest": { "index": "webshop-service-slo" },
+  "frequency": "5m",
+  "pivot": {
+    "group_by": {
+      "service": { "terms": { "field": "service.name.keyword" } },
+      "bucket": { "date_histogram": { "field": "@timestamp", "fixed_interval": "1h" } }
+    },
+    "aggregations": {
+      "total": { "value_count": { "field": "level" } },
+      "errors": { "filter": { "term": { "level": "ERROR" } } },
+      "error_rate": {
+        "bucket_script": {
+          "buckets_path": { "e": "errors>_count", "t": "total" },
+          "script": "params.t == 0 ? 0 : (double)params.e / params.t"
+        }
+      }
+    }
+  }
+}

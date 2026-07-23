@@ -1,0 +1,7 @@
+{
+  "match": {
+    "indices": "service-ownership",
+    "match_field": "service.name",
+    "enrich_fields": ["team", "oncall_channel", "tier"]
+  }
+}

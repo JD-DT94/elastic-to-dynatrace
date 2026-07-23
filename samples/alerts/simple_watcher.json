@@ -1,0 +1,33 @@
+{
+  "trigger": { "schedule": { "interval": "5m" } },
+  "input": {
+    "search": {
+      "request": {
+        "indices": ["web-shop-logs-*"],
+        "body": {
+          "size": 0,
+          "query": {
+            "bool": {
+              "filter": [
+                { "term": { "level": "ERROR" } },
+                { "range": { "@timestamp": { "gte": "now-5m" } } }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "condition": {
+    "compare": { "ctx.payload.hits.total": { "gt": 50 } }
+  },
+  "actions": {
+    "notify_ops": {
+      "email": {
+        "to": "ops@example.com",
+        "subject": "Error spike on web shop",
+        "body": "More than 50 errors in the last 5 minutes."
+      }
+    }
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "_about": "Elastic (Metricbeat/APM) -> Dynatrace Grail built-in metric mapping, researched from Dynatrace host-metrics reference + Elastic system-fields reference (see docs/DESIGN.md sources). Each entry: dt = Grail metric key, dt_classic = builtin: key, scale = multiply Elastic value/threshold by this to reach Dynatrace units, agg = default timeseries aggregation, note = semantic caveat. Anything NOT in this table is treated as a CUSTOM metric: the tool flags it and emits an OpenPipeline metric-extraction stub with a matcher. Overridable via --config metric_map.",
+
+  "host_cpu": {
+    "system.cpu.total.norm.pct":  { "dt": "dt.host.cpu.usage",  "dt_classic": "builtin:host.cpu.usage",  "scale": 100, "agg": "avg", "note": "Elastic fraction 0-1 -> Dynatrace percent 0-100; thresholds scaled x100." },
+    "system.cpu.user.norm.pct":   { "dt": "dt.host.cpu.user",   "dt_classic": "builtin:host.cpu.user",   "scale": 100, "agg": "avg" },
+    "system.cpu.system.norm.pct": { "dt": "dt.host.cpu.system", "dt_classic": "builtin:host.cpu.system", "scale": 100, "agg": "avg" },
+    "system.cpu.iowait.norm.pct": { "dt": "dt.host.cpu.iowait", "dt_classic": "builtin:host.cpu.iowait", "scale": 100, "agg": "avg" }
+  },
+
+  "host_load": {
+    "system.load.1":  { "dt": "dt.host.cpu.load",     "dt_classic": "builtin:host.cpu.load",     "scale": 1, "agg": "avg" },
+    "system.load.5":  { "dt": "dt.host.cpu.load5m",   "dt_classic": "builtin:host.cpu.load5m",   "scale": 1, "agg": "avg" },
+    "system.load.15": { "dt": "dt.host.cpu.load15m",  "dt_classic": "builtin:host.cpu.load15m",  "scale": 1, "agg": "avg" }
+  },
+
+  "host_memory": {
+    "system.memory.actual.used.pct": { "dt": "dt.host.memory.usage",       "dt_classic": "builtin:host.mem.usage",      "scale": 100, "agg": "avg", "note": "fraction 0-1 -> percent 0-100." },
+    "system.memory.used.bytes":      { "dt": "dt.host.memory.used",        "dt_classic": "builtin:host.mem.used",       "scale": 1,   "agg": "avg" },
+    "system.memory.actual.free":     { "dt": "dt.host.memory.avail.bytes", "dt_classic": "builtin:host.mem.avail.bytes","scale": 1,   "agg": "avg" },
+    "system.memory.total":           { "dt": null, "scale": 1, "note": "No direct Grail key; derive from used+avail or treat as custom." }
+  },
+
+  "host_filesystem": {
+    "system.filesystem.used.pct":   { "dt": "dt.host.disk.used.percent", "dt_classic": "builtin:host.disk.usedPct", "scale": 100, "agg": "avg", "note": "fraction 0-1 -> percent 0-100; Dynatrace splits by disk dimension." },
+    "system.filesystem.used.bytes": { "dt": "dt.host.disk.used",         "dt_classic": "builtin:host.disk.used",    "scale": 1,   "agg": "avg" },
+    "system.filesystem.free":       { "dt": "dt.host.disk.avail",        "dt_classic": "builtin:host.disk.avail",   "scale": 1,   "agg": "avg" }
+  },
+
+  "host_network": {
+    "system.network.in.bytes":    { "dt": "dt.host.net.nic.bytes_rx",  "dt_classic": "builtin:host.net.nic.bytesRx",  "scale": 1, "agg": "avg", "note": "SEMANTIC DIFF: Elastic is a cumulative counter; Dynatrace is bytes/sec per NIC. Review aggregation." },
+    "system.network.out.bytes":   { "dt": "dt.host.net.nic.bytes_tx",  "dt_classic": "builtin:host.net.nic.bytesTx",  "scale": 1, "agg": "avg", "note": "SEMANTIC DIFF: counter vs rate." },
+    "system.network.in.packets":  { "dt": "dt.host.net.nic.packets.rx","dt_classic": "builtin:host.net.nic.packets.rx","scale": 1, "agg": "avg" },
+    "system.network.out.packets": { "dt": "dt.host.net.nic.packets.tx","dt_classic": "builtin:host.net.nic.packets.tx","scale": 1, "agg": "avg" }
+  },
+
+  "host_diskio": {
+    "system.diskio.read.bytes":  { "dt": "dt.host.disk.bytes_read",    "dt_classic": "builtin:host.disk.bytesRead",    "scale": 1, "agg": "avg", "note": "counter vs rate - review." },
+    "system.diskio.write.bytes": { "dt": "dt.host.disk.bytes_written", "dt_classic": "builtin:host.disk.bytesWritten", "scale": 1, "agg": "avg", "note": "counter vs rate - review." }
+  },
+
+  "service_apm": {
+    "transaction.duration.ms": { "dt": "dt.service.request.response_time", "scale": 1000, "agg": "avg", "note": "Elastic ms -> Dynatrace response_time is microseconds; thresholds scaled x1000. Confirm unit." },
+    "transaction.duration.us": { "dt": "dt.service.request.response_time", "scale": 1,    "agg": "avg" },
+    "__request_count__":       { "dt": "dt.service.request.count",         "scale": 1,    "agg": "sum",  "note": "value_count(trace.id)/throughput maps here." },
+    "__failure_count__":       { "dt": "dt.service.request.failure_count", "scale": 1,    "agg": "sum",  "note": "count of event.outcome=failure / error maps here." }
+  }
+}

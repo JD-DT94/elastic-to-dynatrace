@@ -1,0 +1,14 @@
+{
+  "description": "Parse web-shop application logs at ingest",
+  "processors": [
+    { "grok": {
+        "field": "message",
+        "patterns": ["\\[%{TIMESTAMP_ISO8601:ts}\\] %{LOGLEVEL:level} %{DATA:logger} - %{GREEDYDATA:body}"]
+    }},
+    { "date": { "field": "ts", "formats": ["ISO8601"], "target_field": "@timestamp" } },
+    { "convert": { "field": "http.response_time_ms", "type": "long", "ignore_missing": true } },
+    { "rename": { "field": "usr", "target_field": "user.id", "ignore_missing": true } },
+    { "set": { "field": "event.dataset", "value": "webshop.app" } },
+    { "remove": { "field": "ts", "ignore_missing": true } }
+  ]
+}

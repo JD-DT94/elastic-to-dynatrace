@@ -1,0 +1,13 @@
+{
+  "size": 50,
+  "query": {
+    "bool": {
+      "filter": [
+        { "term": { "level": "ERROR" } },
+        { "term": { "service.name": "web-shop" } },
+        { "range": { "@timestamp": { "gte": "now-15m" } } }
+      ]
+    }
+  },
+  "sort": [{ "@timestamp": "desc" }]
+}

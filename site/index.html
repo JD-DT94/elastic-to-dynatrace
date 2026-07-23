@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Elastic → Dynatrace migration</title>
+<style>
+  :root { --bg:#0f1117; --card:#181b24; --line:#2a2f3c; --ink:#e7e9ee; --mut:#9aa3b2;
+          --ok:#3fb950; --rev:#d29922; --man:#db6d28; --err:#f85149; --acc:#7c8cff; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;
+         background:var(--bg); color:var(--ink); }
+  .wrap { max-width:860px; margin:0 auto; padding:32px 20px 64px; }
+  h1 { font-size:24px; margin:0 0 4px; }
+  .sub { color:var(--mut); margin:0 0 24px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px;
+          padding:20px; margin-bottom:16px; }
+  #drop { border:2px dashed var(--line); border-radius:12px; padding:48px 20px;
+          text-align:center; color:var(--mut); cursor:pointer; transition:.15s; }
+  #drop.hot { border-color:var(--acc); color:var(--ink); background:#1b2030; }
+  #drop strong { color:var(--ink); }
+  button { background:var(--acc); border:0; color:#fff; font:inherit; font-weight:600;
+           padding:10px 22px; border-radius:8px; cursor:pointer; }
+  button:disabled { opacity:.4; cursor:default; }
+  button.ghost { background:transparent; border:1px solid var(--line); color:var(--mut); }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .badge { display:inline-block; min-width:64px; text-align:center; font-size:12px;
+           font-weight:700; padding:2px 8px; border-radius:20px; }
+  .OK { background:#12261a; color:var(--ok); }  .REVIEW { background:#2b2312; color:var(--rev); }
+  .MANUAL { background:#2b1c10; color:var(--man); } .ERROR { background:#2b1214; color:var(--err); }
+  .item { border-top:1px solid var(--line); padding:10px 0; }
+  .item:first-child { border-top:0; }
+  .src { font-weight:600; }
+  .notes { color:var(--mut); font-size:13px; margin:4px 0 0 0; padding-left:18px; }
+  .ngroup { margin:8px 0 0 8px; }
+  .ngroup summary { color:var(--mut); font-size:13px; cursor:pointer; }
+  .ngroup summary:hover { color:var(--ink); }
+  .outs { color:var(--mut); font-size:12px; }
+  #status { color:var(--mut); font-size:14px; }
+  .counts span { margin-right:14px; font-weight:600; }
+  .foot { color:var(--mut); font-size:12.5px; margin-top:28px; }
+  code { background:#12141c; padding:1px 5px; border-radius:4px; font-size:13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Elastic → Dynatrace migration</h1>
+  <p class="sub">Drop Elastic exports; get Dynatrace dashboards, DQL, alerts and
+     OpenPipeline configs. <strong>Everything runs in your browser</strong> — no file
+     ever leaves this machine.</p>
+
+  <div class="card">
+    <div id="drop"><strong>Drop files here</strong> or click to choose<br>
+      <span style="font-size:13px">Kibana <code>.ndjson</code>, ES|QL / Query DSL / KQL,
+      Logstash <code>.conf</code>, watchers, transforms — single files or a
+      <code>.zip</code>. Add a <code>mapping.config.json</code> to customise
+      index/field mapping.</span></div>
+    <input id="file" type="file" multiple hidden>
+    <div class="row" style="margin-top:14px">
+      <button id="convert" disabled>Convert</button>
+      <button id="download" disabled>Download results (.zip)</button>
+      <button id="reset" class="ghost">Reset</button>
+      <span id="status">Loading Python engine…</span>
+    </div>
+  </div>
+
+  <div class="card" id="report" hidden>
+    <div class="counts" id="counts"></div>
+    <div id="items"></div>
+  </div>
+
+  <p class="foot">Powered by the <code>e2d</code> engine compiled to WebAssembly
+     (Pyodide). Conversion, DQL linting, field audits and the migration report all
+     run locally in this tab — this page makes no network requests with your data.
+     The downloaded zip includes <code>MIGRATION_REPORT.md</code> (what to check),
+     <code>METRICS-GUIDE.md</code> (log→metric best practice for busy tiles), and a
+     suggested <code>mapping.config.json</code> when your indexes need mapping rules.</p>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g,
+  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let py = null, nFiles = 0;
+
+function loadScript(src) {
+  return new Promise((res, rej) => {
+    const el = document.createElement("script");
+    el.src = src; el.onload = res; el.onerror = () => rej(new Error("load failed: " + src));
+    document.head.appendChild(el);
+  });
+}
+
+async function loadRuntime() {
+  // self-hosted runtime first (works on networks that block CDNs), CDN fallback
+  const sources = [
+    { js: "pyodide/pyodide.js", indexURL: "pyodide/" },
+    { js: "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js",
+      indexURL: "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/" },
+  ];
+  let lastErr = null;
+  for (const s of sources) {
+    try {
+      await loadScript(s.js);
+      return await loadPyodide({ indexURL: s.indexURL });
+    } catch (e) { lastErr = e; }
+  }
+  throw new Error("could not load the Python runtime (" + (lastErr && lastErr.message) + ")");
+}
+
+async function boot() {
+  try {
+    py = await loadRuntime();
+    const resp = await fetch("e2d_src.zip");
+    if (!resp.ok) throw new Error("engine bundle missing (e2d_src.zip)");
+    py.unpackArchive(await resp.arrayBuffer(), "zip", { extractDir: "/lib/e2d-src" });
+    py.FS.mkdirTree("/work/in");
+    await py.runPythonAsync(`
+import sys
+sys.path.insert(0, '/lib/e2d-src')
+import e2d  # noqa: F401 — fail fast if the bundle is broken
+`);
+    $("status").textContent = "Ready — drop your Elastic exports.";
+  } catch (e) {
+    $("status").textContent = "Failed to load engine: " + e.message;
+  }
+}
+boot();
+
+function setStatus(t) { $("status").textContent = t; }
+
+async function addFiles(files) {
+  if (!py) return;
+  for (const f of files) {
+    const buf = new Uint8Array(await f.arrayBuffer());
+    if (f.name.toLowerCase().endsWith(".zip")) {
+      try { py.unpackArchive(buf.buffer, "zip", { extractDir: "/work/in" }); }
+      catch { py.FS.writeFile("/work/in/" + f.name.replace(/[^\w.\-]/g, "_"), buf); }
+    } else {
+      py.FS.writeFile("/work/in/" + f.name.replace(/[^\w.\-]/g, "_"), buf);
+    }
+  }
+  nFiles = py.runPython(
+    "import pathlib; sum(1 for p in pathlib.Path('/work/in').rglob('*') if p.is_file())");
+  $("convert").disabled = nFiles === 0;
+  setStatus(nFiles + " input file(s) staged.");
+}
+
+async function convert() {
+  $("convert").disabled = true;
+  setStatus("Converting…");
+  try {
+    const out = await py.runPythonAsync(`
+import json, shutil
+from pathlib import Path
+from dataclasses import asdict
+from e2d.config import MappingConfig
+from e2d.migrate import run_migration
+
+cfg = None
+mc = Path('/work/in/mapping.config.json')
+if mc.exists():
+    cfg = MappingConfig.load(str(mc))
+    mc.unlink()
+out = Path('/work/out')
+if out.exists():
+    shutil.rmtree(out)
+s = run_migration('/work/in', '/work/out', config=cfg)
+shutil.make_archive('/work/converted', 'zip', '/work/out')
+json.dumps({'counts': s.counts(), 'items': [asdict(i) for i in s.items],
+            'skipped': s.skipped, 'secrets': s.secrets})
+`);
+    render(JSON.parse(out));
+    $("download").disabled = false;
+    setStatus("Done.");
+  } catch (e) {
+    setStatus("Conversion failed: " + e.message.split("\n").slice(-2).join(" "));
+  } finally {
+    $("convert").disabled = nFiles === 0;
+  }
+}
+
+function render(r) {
+  $("report").hidden = false;
+  $("counts").innerHTML =
+    `<span class="OK badge">OK ${r.counts.OK}</span>` +
+    `<span class="REVIEW badge">REVIEW ${r.counts.REVIEW}</span>` +
+    `<span class="MANUAL badge">MANUAL ${r.counts.MANUAL}</span>` +
+    `<span class="ERROR badge">ERROR ${r.counts.ERROR}</span>`;
+  let html = "";
+  for (const it of r.items) {
+    html += `<div class="item"><span class="badge ${esc(it.status)}">${esc(it.status)}</span> ` +
+            `<span class="src">${esc(it.source)}</span> ` +
+            `<span class="outs">→ ${it.outputs.map(esc).join(", ") || "(no output)"}</span>`;
+    if (it.notes.length) {
+      const strip = (n, tag) => n.startsWith(tag) ? n.slice(tag.length).trim() : n;
+      const manual = [], warn = [], info = [];
+      for (const n of it.notes) {
+        if (n.startsWith("[MANUAL]")) manual.push(strip(n, "[MANUAL]"));
+        else if (n.startsWith("[INFO]")) info.push(strip(n, "[INFO]"));
+        else warn.push(strip(n, "[WARN]"));
+      }
+      const list = (arr) => `<ul class="notes">${arr.map(n => "<li>" + esc(n) + "</li>").join("")}</ul>`;
+      if (manual.length)
+        html += `<div class="ngroup"><span class="badge MANUAL">rebuild by hand</span>${list(manual)}</div>`;
+      if (warn.length)
+        html += `<div class="ngroup"><span class="badge REVIEW">double-check</span>${list(warn)}</div>`;
+      if (info.length)
+        html += `<details class="ngroup"><summary>${info.length} automatic adjustment(s) — ` +
+                `no action needed</summary>${list(info)}</details>`;
+    }
+    html += `</div>`;
+  }
+  for (const s of r.skipped)
+    html += `<div class="item"><span class="badge">SKIP</span> <span class="src">${esc(s)}</span></div>`;
+  if (r.secrets.length)
+    html += `<div class="item"><span class="badge ERROR">SECRET</span> possible secrets found ` +
+            `(not copied to output): ${r.secrets.map(esc).join("; ")}</div>`;
+  $("items").innerHTML = html;
+}
+
+function download() {
+  const data = py.FS.readFile("/work/converted.zip");
+  const url = URL.createObjectURL(new Blob([data], { type: "application/zip" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = "converted.zip"; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function reset() {
+  if (!py) return;
+  py.runPython(`
+import shutil, pathlib
+shutil.rmtree('/work/in', ignore_errors=True)
+shutil.rmtree('/work/out', ignore_errors=True)
+pathlib.Path('/work/in').mkdir(parents=True)
+`);
+  nFiles = 0;
+  $("convert").disabled = true; $("download").disabled = true;
+  $("report").hidden = true;
+  setStatus("Ready — drop your Elastic exports.");
+}
+
+const drop = $("drop");
+drop.onclick = () => $("file").click();
+$("file").onchange = e => addFiles(e.target.files);
+drop.ondragover = e => { e.preventDefault(); drop.classList.add("hot"); };
+drop.ondragleave = () => drop.classList.remove("hot");
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove("hot"); addFiles(e.dataTransfer.files); };
+$("convert").onclick = convert;
+$("download").onclick = download;
+$("reset").onclick = reset;
+</script>
+</body>
+</html>

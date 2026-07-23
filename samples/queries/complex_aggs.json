@@ -1,0 +1,32 @@
+{
+  "size": 0,
+  "query": {
+    "bool": {
+      "filter": [{ "range": { "@timestamp": { "gte": "now-24h" } } }],
+      "must_not": [{ "term": { "deployment.environment": "test" } }]
+    }
+  },
+  "aggs": {
+    "over_time": {
+      "date_histogram": { "field": "@timestamp", "fixed_interval": "30m" },
+      "aggs": {
+        "by_service": {
+          "terms": { "field": "service.name.keyword", "size": 5 },
+          "aggs": {
+            "total": { "value_count": { "field": "level" } },
+            "errors": { "filter": { "term": { "level": "ERROR" } } },
+            "p95_latency": {
+              "percentiles": { "field": "http.response_time_ms", "percents": [95] }
+            },
+            "error_rate": {
+              "bucket_script": {
+                "buckets_path": { "e": "errors>_count", "t": "total" },
+                "script": "params.t == 0 ? 0 : (double)params.e / params.t"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

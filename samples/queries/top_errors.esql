@@ -1,0 +1,5 @@
+FROM web-shop-logs-*
+| WHERE level == "ERROR" AND @timestamp > NOW() - 1 hour
+| STATS errors = COUNT(*), users = COUNT_DISTINCT(user.id) BY service.name
+| SORT errors DESC
+| LIMIT 10

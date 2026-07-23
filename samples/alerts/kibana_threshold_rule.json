@@ -1,0 +1,22 @@
+{
+  "rule_type_id": ".index-threshold",
+  "name": "High 5xx rate on web shop",
+  "schedule": { "interval": "1m" },
+  "params": {
+    "index": ["web-shop-logs-*"],
+    "timeField": "@timestamp",
+    "aggType": "count",
+    "groupBy": "top",
+    "termField": "service.name.keyword",
+    "termSize": 5,
+    "timeWindowSize": 5,
+    "timeWindowUnit": "m",
+    "thresholdComparator": ">",
+    "threshold": [100],
+    "filterKuery": "http.response.status_code >= 500"
+  },
+  "actions": [
+    { "group": "threshold met", "id": "slack-ops",
+      "params": { "message": "5xx spike on {{context.group}}" } }
+  ]
+}

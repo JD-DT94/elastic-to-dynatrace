@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "elastic-to-dynatrace"
+version = "0.1.0"
+description = "Bulk-convert Elastic ES|QL queries and Kibana dashboards into Dynatrace DQL, dashboards, and Terraform."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+# Core (ES|QL -> DQL + dashboard conversion) is dependency-free stdlib only.
+# Extras pull in what is needed for Terraform packaging / API upload.
+dependencies = []
+
+[project.optional-dependencies]
+push = ["requests>=2.28"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+e2d = "e2d.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"e2d.data" = ["*.json"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

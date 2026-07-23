@@ -1,0 +1,13 @@
+{
+  "_comment": "Sample mapping config. index_map routes Elastic index patterns to Grail data objects; field_map / data_object_field_map rename Elastic fields to their Dynatrace equivalents.",
+
+  "index_map": [
+    { "pattern": "^web-logs", "data_object": "logs" },
+    { "pattern": "(^|[-_.])traces?([-_.]|$)", "data_object": "spans" }
+  ],
+
+  "field_map": {
+    "@timestamp": "timestamp",
+    "level": "loglevel"
+  }
+}

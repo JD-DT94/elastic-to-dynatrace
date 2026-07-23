@@ -1,0 +1,53 @@
+{
+  "trigger": { "schedule": { "interval": "10m" } },
+  "input": {
+    "search": {
+      "request": {
+        "indices": ["payments-logs-*"],
+        "body": {
+          "size": 0,
+          "query": {
+            "bool": {
+              "filter": [
+                { "term": { "payment.status": "FAILED" } },
+                { "range": { "@timestamp": { "gte": "now-10m" } } }
+              ]
+            }
+          },
+          "aggs": {
+            "by_provider": {
+              "terms": { "field": "payment.provider.keyword", "size": 10 },
+              "aggs": {
+                "failed_amount": { "sum": { "field": "payment.amount" } }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "condition": {
+    "script": {
+      "source": "return ctx.payload.aggregations.by_provider.buckets.stream().anyMatch(b -> b.failed_amount.value > 10000)"
+    }
+  },
+  "transform": {
+    "script": { "source": "return ctx.payload.aggregations.by_provider.buckets" }
+  },
+  "actions": {
+    "page_oncall": {
+      "webhook": {
+        "scheme": "https",
+        "host": "hooks.example.com",
+        "port": 443,
+        "method": "post",
+        "path": "/pager/trigger",
+        "headers": { "Authorization": "Bearer REDACTED-SAMPLE-TOKEN" },
+        "body": "{\"summary\": \"Payment failures over 10k for a provider\"}"
+      }
+    },
+    "log_it": {
+      "logging": { "text": "Provider failure threshold breached" }
+    }
+  }
+}

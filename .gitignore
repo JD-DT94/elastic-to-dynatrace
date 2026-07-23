@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+.venv/
+venv/
+
+# Conversion output (generated)
+/out/
+/dt_dashboards/
+/tf_out/
+*.local.json
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+
+# Real Elastic exports and any private/company data — never commit.
+# Synthetic, shareable inputs live in /samples/ instead.
+/examples/
+/private/
+/local/
+*.export.ndjson
