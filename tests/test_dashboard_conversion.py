@@ -709,3 +709,32 @@ def test_convert_all_dashboards_smoke():
         json.dumps(dashboard)  # must be serializable
         total_tiles += len(content["tiles"])
     assert total_tiles > 100  # the export has hundreds of panels
+
+
+@pytest.mark.skipif(not EXPORT.exists(), reason="sample export not present")
+def test_cli_writes_ui_importable_content_files(tmp_path):
+    """Regression: written files must be the bare content document — the
+    `{name, type, content}` Document-API wrapper imports as a BLANK dashboard
+    when uploaded through the Dashboards app UI."""
+    import argparse
+    from e2d.dashboards.converter import convert_dashboard_file
+
+    args = argparse.Namespace(input=str(EXPORT), output=str(tmp_path),
+                              config=None, title="Financials", terraform=False,
+                              verbose=False)
+    assert convert_dashboard_file(args) == 0
+    files = list(tmp_path.glob("*.json"))
+    assert files
+    doc = json.loads(files[0].read_text(encoding="utf-8"))
+    assert "content" not in doc and "type" not in doc
+    assert doc["tiles"] and set(doc["tiles"]) == set(doc["layouts"])
+    assert "version" in doc and "variables" in doc
+
+
+def test_safe_filename_keeps_title_readable():
+    from e2d.dashboards.converter import _safe_filename
+    # the Dashboards app names an uploaded dashboard after its file
+    assert _safe_filename("[PFK] Financials") == "[PFK] Financials"
+    assert _safe_filename("REST DP - Global Dashboard") == "REST DP - Global Dashboard"
+    assert _safe_filename("a/b\\c:d*e?") == "a_b_c_d_e_"
+    assert _safe_filename("  .. ") == "dashboard"

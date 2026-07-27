@@ -49,6 +49,16 @@ def test_apply_success_mocked(monkeypatch):
 def test_deploy_dashboards_batch_dry_run():
     res = deploy_dashboards("https://x", "t", [("a.json", DASH), ("b.json", {"tiles": {}})], apply=False)
     assert len(res) == 2 and all(r.dry_run for r in res)
+    # a wrapped doc keeps its embedded name; a bare content doc is named
+    # after its file (converted files carry no name key)
+    assert res[0].name == "My Dash" and res[1].name == "b"
+
+
+def test_deploy_names_bare_content_from_filename():
+    content = {"version": 21, "variables": [], "tiles": {}, "layouts": {}}
+    res = deploy_dashboards("https://x", "t",
+                            [("out/dashboards/[PFK] Financials.json", content)], apply=False)
+    assert res[0].name == "[PFK] Financials"
 
 
 def test_detector_settings_value_shape():

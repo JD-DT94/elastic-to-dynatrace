@@ -77,7 +77,9 @@ def test_vis_only_export_synthesizes_dashboard(tmp_path):
     dashboards = list((tmp_path / "out" / "dashboards").glob("*.json"))
     assert len(dashboards) == 1
     dash = json.loads(dashboards[0].read_text(encoding="utf-8"))
-    tiles = dash["content"]["tiles"]
+    # files hold the bare content document (importable via Dashboards app Upload)
+    assert "content" not in dash and "version" in dash and "layouts" in dash
+    tiles = dash["tiles"]
     assert len(tiles) == 1
     assert "summarize" in list(tiles.values())[0]["query"]
     assert any("no dashboard, only saved visualizations" in n

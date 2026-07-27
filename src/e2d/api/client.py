@@ -35,12 +35,17 @@ def _iter_dashboard_files(input_path: str) -> List[Path]:
     return [p]
 
 
-def _content_payload(doc: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
-    """Return (name, content_object) from either a full dashboard or a content doc."""
+def _content_payload(doc: Dict[str, Any],
+                     fallback_name: str = "Imported dashboard") -> Tuple[str, Dict[str, Any]]:
+    """Return (name, content_object) from either a full dashboard or a content doc.
+
+    Converted files hold only the content document (importable straight into
+    the Dashboards app); the display name travels in the filename.
+    """
     if "content" in doc and "name" in doc:
         return doc["name"], doc["content"]
-    # already a bare content payload
-    return doc.get("name", "Imported dashboard"), doc
+    # bare content payload — name comes from the caller (usually the filename)
+    return doc.get("name") or fallback_name, doc
 
 
 # --------------------------------------------------------------------------- #
@@ -271,7 +276,7 @@ def push_cli(args) -> int:
             print(f"[SKIP] {f.name}: invalid JSON ({e})", file=sys.stderr)
             n_err += 1
             continue
-        name, content = _content_payload(doc)
+        name, content = _content_payload(doc, fallback_name=f.stem)
 
         if not apply:
             tiles = len(content.get("tiles", {})) if isinstance(content, dict) else "?"

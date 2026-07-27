@@ -205,7 +205,11 @@ def _do_kibana(text: str, src: str, out: Path, config: MappingConfig, summary: M
                         "the layout to taste.")
         ddir.mkdir(parents=True, exist_ok=True)
         base = _safe_filename(d.title)
-        (ddir / f"{base}.json").write_text(json.dumps(dashboard, indent=2), encoding="utf-8")
+        # Content document only — directly uploadable in the Dashboards app
+        # (the `{name, type, content}` wrapper imports as a blank dashboard
+        # there; deploy paths rebuild it from the filename).
+        (ddir / f"{base}.json").write_text(json.dumps(dashboard["content"], indent=2),
+                                           encoding="utf-8")
         outs = [f"dashboards/{base}.json"]
         audit = audit_dashboard_fields(dashboard)
         if audit["custom"]:
@@ -613,7 +617,8 @@ def render_report(summary: MigrationSummary) -> str:
              "custom attribute it queries isn't ingested. The manifests list what to verify "
              "and include OpenPipeline extraction scaffolds.")
     L.append("3. Deploy dashboards: upload the JSON via the Dynatrace Dashboards app "
-             "(**Upload**), or from a machine with the CLI: "
+             "(**Upload** — the dashboard takes its name from the file), or from a machine "
+             "with the CLI: "
              "`e2d push ./<out>/dashboards --env-url https://<env>.apps.dynatrace.com --apply`.")
     L.append("4. Pipelines: apply each folder under `pipelines_tf/` with Terraform, or paste "
              "the `.dpl` stages into OpenPipeline in the UI.")

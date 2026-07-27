@@ -624,8 +624,11 @@ def convert_dashboard(dash: SavedObject, export: KibanaExport, config: MappingCo
 # --------------------------------------------------------------------------- #
 
 def _safe_filename(name: str) -> str:
-    keep = "".join(c if (c.isalnum() or c in " -_") else "_" for c in name).strip()
-    return (keep or "dashboard").replace(" ", "_")[:120]
+    # Keep the title readable: the Dashboards app names an uploaded dashboard
+    # after its file, so `[PFK] Financials.json` imports as `[PFK] Financials`.
+    keep = "".join(c if (c.isalnum() or c in " -_.,()[]&+'@!") else "_" for c in name)
+    keep = " ".join(keep.split()).strip(" .")
+    return (keep or "dashboard")[:120].strip(" .")
 
 
 def convert_dashboard_file(args) -> int:
@@ -684,7 +687,12 @@ def convert_dashboard_file(args) -> int:
                 manifests.append((_safe_filename(d.title), manifest))
             continue
 
-        payload = json.dumps(dashboard, indent=2)
+        # Write the *content* document (`{version, variables, tiles, layouts}`):
+        # the exact shape the Dashboards app's Upload accepts (its Download
+        # produces the same). The Document-API `{name, type, content}` wrapper
+        # is rebuilt by `e2d push` / the GUI deploy from the filename, so a
+        # wrapper on disk would import as a blank dashboard in the UI.
+        payload = json.dumps(dashboard["content"], indent=2)
         if single:
             Path(out).write_text(payload, encoding="utf-8")
             dest = Path(out)

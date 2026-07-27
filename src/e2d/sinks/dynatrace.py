@@ -29,11 +29,17 @@ class DeployResult:
     dry_run: bool = False
 
 
-def _content_payload(doc: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
-    """(name, content) from either a full dashboard wrapper or a bare content doc."""
+def _content_payload(doc: Dict[str, Any],
+                     fallback_name: str = "Imported dashboard") -> Tuple[str, Dict[str, Any]]:
+    """(name, content) from either a full dashboard wrapper or a bare content doc.
+
+    Converted files hold only the content document (so the Dashboards app can
+    import them directly); their display name travels in the filename.
+    """
     if isinstance(doc, dict) and "content" in doc and "name" in doc:
         return doc["name"], doc["content"]
-    return (doc.get("name", "Imported dashboard") if isinstance(doc, dict) else "Imported dashboard"), doc
+    name = doc.get("name") if isinstance(doc, dict) else None
+    return (name or fallback_name), doc
 
 
 def push_dashboard(env_url: str, token: Optional[str], name: str, content: Dict[str, Any],
@@ -72,8 +78,10 @@ def deploy_dashboards(env_url: str, token: Optional[str],
                       dashboards: List[Tuple[str, Dict[str, Any]]], apply: bool = False) -> List[DeployResult]:
     """Push a batch of (filename, dashboard-doc) pairs."""
     results: List[DeployResult] = []
-    for _fname, doc in dashboards:
-        name, content = _content_payload(doc)
+    for fname, doc in dashboards:
+        stem = fname.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+        stem = stem[:-5] if stem.lower().endswith(".json") else stem
+        name, content = _content_payload(doc, fallback_name=stem or "Imported dashboard")
         results.append(push_dashboard(env_url, token, name, content, apply=apply))
     return results
 
