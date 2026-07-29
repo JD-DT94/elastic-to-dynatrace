@@ -379,7 +379,7 @@ PAGE = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Elastic → Dynatrace migration</title>
+<title>e2d</title>
 <style>
   :root {
     --bg:#0b0e14; --panel:#121722; --panel2:#161c29; --line:rgba(255,255,255,.08);
@@ -412,7 +412,7 @@ PAGE = r"""<!DOCTYPE html>
            border:1px solid var(--line); border-radius:999px; padding:5px 13px;
            background:rgba(255,255,255,.03); }
   .hero { text-align:center; padding:46px 0 30px; }
-  h1 { margin:0 0 12px; font-size:clamp(30px,5vw,44px); line-height:1.08; font-weight:700;
+  h1 { margin:0 0 12px; padding-bottom:.08em; font-size:clamp(30px,5vw,44px); line-height:1.15; font-weight:700;
        letter-spacing:-.025em;
        font-family:"Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;
        background:linear-gradient(92deg,var(--teal) 8%,#7cc4ff 55%,var(--blue) 92%);
@@ -516,6 +516,10 @@ PAGE = r"""<!DOCTYPE html>
           border:1px solid var(--line); border-radius:14px; padding:18px;
           transition:border-color .2s, transform .2s; }
   .feat:hover { border-color:var(--line2); transform:translateY(-2px); }
+  .try { margin-top:12px; padding:7px 14px; font-size:12.5px; font-weight:600;
+         background:transparent; border:1px solid var(--line2); color:var(--mut);
+         border-radius:8px; box-shadow:none; }
+  .try:hover:not(:disabled) { border-color:var(--blue); color:var(--ink); filter:none; }
   .feat .ic { width:36px; height:36px; border-radius:10px; display:grid; place-items:center;
               background:rgba(77,141,255,.12); color:#7cc4ff; margin-bottom:12px; }
   .feat h3 { margin:0 0 4px; font-size:14.5px; font-weight:650; }
@@ -620,6 +624,7 @@ PAGE = r"""<!DOCTYPE html>
       <p>Lens incl. formulas, TSVB, legacy visualizations, saved searches, controls, and Vega
          with an embedded ES query <b>&#8594; dashboard JSON</b> with DQL tiles, variables and
          series colours. Import in the Dashboards app or push from here.</p>
+      <button class="try" data-eg="dashboard">Try an example</button>
     </div>
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -628,6 +633,7 @@ PAGE = r"""<!DOCTYPE html>
       <h3>Queries</h3>
       <p>ES|QL, Query DSL, KQL and Lucene <b>&#8594; DQL</b>, linted offline before it
          reaches you.</p>
+      <button class="try" data-eg="query">Try an example</button>
     </div>
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -637,6 +643,7 @@ PAGE = r"""<!DOCTYPE html>
       <p>Logstash <code>.conf</code> and Elasticsearch ingest pipelines
          <b>&#8594; OpenPipeline stages</b>: a readable <code>.dpl</code> plus a deployable
          Terraform module.</p>
+      <button class="try" data-eg="pipeline">Try an example</button>
     </div>
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -647,6 +654,7 @@ PAGE = r"""<!DOCTYPE html>
       <p>Watchers and Kibana alerting rules, incl. index-threshold and ES-query rules
          <b>&#8594; Davis anomaly detectors + Workflows</b> as Terraform. Detectors can also
          be pushed from here.</p>
+      <button class="try" data-eg="alert">Try an example</button>
     </div>
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -655,6 +663,7 @@ PAGE = r"""<!DOCTYPE html>
       <h3>Transforms</h3>
       <p>Continuous transforms <b>&#8594; rollup DQL</b> with a migration note per
          transform.</p>
+      <button class="try" data-eg="transform">Try an example</button>
     </div>
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -667,6 +676,7 @@ PAGE = r"""<!DOCTYPE html>
       <h3>Cluster config</h3>
       <p>ILM policies, index templates and enrich policies <b>&#8594; written guides</b> for
          bucket retention, OpenPipeline routing and Grail lookups.</p>
+      <button class="try" data-eg="config">Try an example</button>
     </div>
   </div>
   <p class="alsonote">Every run also writes <code>MIGRATION_REPORT.md</code> with a
@@ -1031,6 +1041,58 @@ result.addEventListener("click", e => {
   if (e.target.closest("[data-collapse]"))
     result.querySelectorAll(".item").forEach(it => it.classList.remove("open"));
 });
+// ---- try-an-example buttons ---------------------------------------------
+const EX_QUERY = "FROM logs-* | WHERE status >= 500 | STATS errors = COUNT() BY service.name | SORT errors DESC | LIMIT 10";
+const EXAMPLES = {
+  dashboard: { file: "example_dashboard.ndjson",
+    text: JSON.stringify({ id: "eg-vis", type: "visualization", references: [], attributes: {
+      title: "Errors by service",
+      visState: JSON.stringify({ type: "horizontal_bar", title: "Errors by service",
+        aggs: [{ id: "1", type: "count", schema: "metric", params: {} },
+               { id: "2", type: "terms", schema: "segment",
+                 params: { field: "service.name", size: 5 } }] }),
+      kibanaSavedObjectMeta: { searchSourceJSON: JSON.stringify(
+        { query: { query: "", language: "kuery" }, filter: [] }) } } }) },
+  pipeline: { file: "example_logstash.conf",
+    text: 'input { beats { port => 5044 } }\n' +
+      'filter {\n' +
+      '  grok { match => { "message" => "%{IP:client_ip} %{WORD:method} %{URIPATH:request_uri} %{NUMBER:status}" } }\n' +
+      '  mutate { convert => { "status" => "integer" } }\n' +
+      '  if [request_uri] =~ /^\\/health/ { drop { } }\n' +
+      '}\n' +
+      'output { elasticsearch { hosts => ["es:9200"] } }\n' },
+  alert: { file: "example_watcher.json",
+    text: JSON.stringify({ trigger: { schedule: { interval: "5m" } },
+      input: { search: { request: { indices: ["logs-*"], body: {
+        query: { bool: { must: [{ match: { level: "ERROR" } }] } } } } } },
+      condition: { compare: { "ctx.payload.hits.total": { gt: 100 } } },
+      actions: { notify_team: { email: { to: "ops@example.com", subject: "Error spike" } } } }) },
+  transform: { file: "example_transform.json",
+    text: JSON.stringify({ source: { index: ["logs-*"] },
+      pivot: { group_by: { service: { terms: { field: "service.name" } } },
+               aggregations: { avg_duration: { avg: { field: "duration" } } } },
+      dest: { index: "svc-rollup" }, frequency: "5m" }) },
+  config: { file: "example_ilm.json",
+    text: JSON.stringify({ policy: { phases: {
+      hot: { min_age: "0ms", actions: { rollover: { max_size: "50gb", max_age: "7d" } } },
+      delete: { min_age: "30d", actions: { delete: {} } } } } }) },
+};
+
+document.querySelectorAll("[data-eg]").forEach(b => b.addEventListener("click", () => {
+  const kind = b.dataset.eg;
+  if (kind === "query") {
+    $("#qin").value = EX_QUERY;
+    $("#qlang").value = "esql";
+    document.getElementById("quick").scrollIntoView({ behavior: "smooth" });
+    $("#qgo").click();
+    return;
+  }
+  const eg = EXAMPLES[kind];
+  chosen = [new File([eg.text], eg.file)];
+  showFiles();
+  document.getElementById("stage-input").scrollIntoView({ behavior: "smooth" });
+  go.click();
+}));
 </script>
 </body>
 </html>
