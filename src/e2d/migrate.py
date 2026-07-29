@@ -13,7 +13,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from e2d.config import MappingConfig
 from e2d.report import Report, Severity
@@ -44,6 +44,8 @@ class MigrationSummary:
     secrets: List[str] = field(default_factory=list)        # "file: key" where a secret was seen
     unmatched_indexes: List[str] = field(default_factory=list)  # index patterns with no index_map rule
     metrics_advisories: int = 0                             # tiles that could become ingest metrics
+    dashboard_fields: Dict[str, List[str]] = field(default_factory=dict)  # source -> custom fields queried
+    pipeline_fields: Dict[str, List[str]] = field(default_factory=dict)   # source -> fields produced at ingest
 
     def counts(self):
         c = {"OK": 0, "REVIEW": 0, "MANUAL": 0, "ERROR": 0}
@@ -219,6 +221,8 @@ def _do_kibana(text: str, src: str, out: Path, config: MappingConfig, summary: M
         outs = [f"dashboards/{base}.json"]
         audit = audit_dashboard_fields(dashboard)
         if audit["custom"]:
+            merged = set(summary.dashboard_fields.get(src, [])) | set(audit["custom"])
+            summary.dashboard_fields[src] = sorted(merged)
             (ddir / f"{base}.fields.md").write_text(
                 render_field_manifest(dashboard["name"], audit), encoding="utf-8")
             outs.append(f"dashboards/{base}.fields.md")
@@ -275,6 +279,9 @@ def _do_pipeline(text: str, src: str, out: Path, kind: str, summary: MigrationSu
     else:
         from e2d.pipelines.ingest import translate_ingest
         res = translate_ingest(json.loads(text))
+
+    from e2d.plan import fields_produced
+    summary.pipeline_fields[src] = fields_produced([s.dql for s in res.stages if s.dql])
 
     base = Path(src).stem
     pdir = out / "pipelines"
@@ -518,12 +525,14 @@ def render_report(summary: MigrationSummary) -> str:
     L.append("")
     L.append("| Status | Meaning |")
     L.append("|--------|---------|")
-    L.append("| ✅ OK | Converted cleanly — ready to use. |")
-    L.append("| ⚠️ REVIEW | Converted, but double-check it (reasons below). |")
-    L.append("| ✋ MANUAL | Couldn't fully convert — needs a person. |")
+    L.append("| OK | Converted cleanly — ready to use. |")
+    L.append("| REVIEW | Converted, but double-check it (reasons below). |")
+    L.append("| MANUAL | Couldn't fully convert — needs a person. |")
     L.append("")
 
-    icon = {"OK": "✅", "REVIEW": "⚠️", "MANUAL": "✋", "ERROR": "❌"}
+    from e2d.plan import build_plan, render_plan_md
+    L.extend(render_plan_md(build_plan(summary)))
+
     for cat, title in (("dashboard", "Dashboards"), ("query", "Queries"), ("pipeline", "Pipelines"),
                        ("alert", "Alerts & watchers"), ("transform", "Transforms"),
                        ("config", "Cluster config (ILM / templates / enrich)")):
@@ -532,15 +541,15 @@ def render_report(summary: MigrationSummary) -> str:
             continue
         L.append(f"## {title} ({len(rows)})")
         L.append("")
-        L.append("| | Item | Output |")
-        L.append("|--|------|--------|")
+        L.append("| Status | Item | Output |")
+        L.append("|--------|------|--------|")
         for it in rows:
-            L.append(f"| {icon.get(it.status,'?')} | `{it.source}` | {', '.join(f'`{o}`' for o in it.outputs) or '—'} |")
+            L.append(f"| {it.status} | `{it.source}` | {', '.join(f'`{o}`' for o in it.outputs) or '—'} |")
         L.append("")
 
     flagged = [it for it in summary.items if it.status in ("REVIEW", "MANUAL", "ERROR")]
     if flagged:
-        L.append("## ⚠️ What needs your attention")
+        L.append("## What needs your attention")
         L.append("")
         L.append("Grouped by what to do: **rebuild by hand** → **double-check** → "
                  "automatic adjustments (usually fine, listed for completeness).")
@@ -554,17 +563,17 @@ def render_report(summary: MigrationSummary) -> str:
             info = [n for n in notes if n.startswith("[INFO]")]
             other = [n for n in notes if n not in manual and n not in warn and n not in info]
             if manual:
-                L.append("**✋ Rebuild by hand:**")
+                L.append("**Rebuild by hand:**")
                 for n in manual:
                     L.append(f"- {n[len('[MANUAL] '):]}")
                 L.append("")
             if warn or other:
-                L.append("**🔎 Double-check:**")
+                L.append("**Double-check:**")
                 for n in warn + other:
                     L.append(f"- {n[len('[WARN] '):] if n.startswith('[WARN]') else n}")
                 L.append("")
             if info:
-                L.append(f"<details><summary>ℹ️ {len(info)} automatic adjustment(s) — "
+                L.append(f"<details><summary>{len(info)} automatic adjustment(s) — "
                          "no action needed</summary>")
                 L.append("")
                 for n in info:
@@ -574,7 +583,7 @@ def render_report(summary: MigrationSummary) -> str:
             L.append("")
 
     if summary.secrets:
-        L.append("## 🔐 Security")
+        L.append("## Security")
         L.append("")
         L.append("Possible credentials were seen in the inputs below. They were **not** copied into "
                  "any output — replace them with your Dynatrace-side secrets when deploying:")
@@ -584,7 +593,7 @@ def render_report(summary: MigrationSummary) -> str:
         L.append("")
 
     if summary.metrics_advisories:
-        L.append("## 📈 Consider metrics for the busiest tiles")
+        L.append("## Consider metrics for the busiest tiles")
         L.append("")
         L.append(f"**{summary.metrics_advisories}** time-series tile(s) chart raw log queries. "
                  "They work as-is — but for tiles you keep long-term, extracting the number "
@@ -595,7 +604,7 @@ def render_report(summary: MigrationSummary) -> str:
         L.append("")
 
     if summary.unmatched_indexes:
-        L.append("## 🗺️ Index mapping")
+        L.append("## Index mapping")
         L.append("")
         L.append("These Elastic index patterns had no mapping rule, so their panels default "
                  "to the `logs` data object:")
@@ -610,24 +619,10 @@ def render_report(summary: MigrationSummary) -> str:
         L.append("")
 
     if summary.skipped:
-        L.append("## 📋 Not converted (with reasons)")
+        L.append("## Not converted (with reasons)")
         L.append("")
         for s in summary.skipped:
             L.append(f"- `{s}`")
         L.append("")
 
-    L.append("## 🚀 Next steps")
-    L.append("")
-    L.append("1. Open each ⚠️ item's notes above and verify the flagged tiles/queries in Dynatrace.")
-    L.append("2. Check every `*.fields.md` — a tile renders **empty, with no error**, when a "
-             "custom attribute it queries isn't ingested. The manifests list what to verify "
-             "and include OpenPipeline extraction scaffolds.")
-    L.append("3. Deploy dashboards: upload the JSON via the Dynatrace Dashboards app "
-             "(**Upload** — the dashboard takes its name from the file), or from a machine "
-             "with the CLI: "
-             "`e2d push ./<out>/dashboards --env-url https://<env>.apps.dynatrace.com --apply`.")
-    L.append("4. Pipelines: apply each folder under `pipelines_tf/` with Terraform, or paste "
-             "the `.dpl` stages into OpenPipeline in the UI.")
-    L.append("5. When the dashboards are settled, work through `METRICS-GUIDE.md` (if present) "
-             "to move the heaviest tiles onto ingest-time metrics.")
     return "\n".join(L) + "\n"

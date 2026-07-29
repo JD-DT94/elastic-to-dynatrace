@@ -169,12 +169,14 @@ class Sessions:
             d["remediation"] = [{"title": r.title, "what": r.what, "fix": r.fix}
                                 for r in remediations_for_notes(it.notes)]
             items.append(d)
+        from e2d.plan import build_plan
         return {
             "counts": summary.counts(),
             "total": len(summary.items),
             "items": items,
             "secrets": list(dict.fromkeys(summary.secrets)),
             "skipped": summary.skipped,
+            "plan": build_plan(summary),
             "download": f"/download/{sid}",
         }
 
@@ -373,137 +375,190 @@ PAGE = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Elastic → Dynatrace migration</title>
 <style>
-  :root { --bg:#111315; --card:#16191d; --raise:#1b2026; --line:#272c33; --line2:#39414b;
-          --ink:#d7dce2; --mut:#8b949f; --faint:#626b76;
-          --ok:#57b769; --rev:#d4a63e; --man:#dd8047; --err:#e25b55;
-          --act:#d4a63e; --act-ink:#1c1305; }
+  :root {
+    --bg:#0b0e14; --panel:#121722; --panel2:#161c29; --line:rgba(255,255,255,.08);
+    --line2:rgba(255,255,255,.16); --ink:#e6eaf2; --mut:#94a0b3; --faint:#5f6b7f;
+    --ok:#34c07c; --rev:#e0a63c; --man:#e07b4a; --err:#e5544e;
+    --blue:#4d8dff; --teal:#2dd4bf;
+  }
   * { box-sizing:border-box; }
   html { color-scheme:dark; }
-  body { margin:0; background:var(--bg); color:var(--ink);
-         font:14px/1.55 "Segoe UI",system-ui,sans-serif; }
-  .wrap { max-width:880px; margin:0 auto; padding:0 22px 72px; }
-  header { display:flex; align-items:baseline; justify-content:space-between; gap:14px;
-           flex-wrap:wrap; padding:22px 0 14px; border-bottom:1px solid var(--line); }
-  .brand { font-family:ui-monospace,"Cascadia Mono",Consolas,monospace; font-size:14px;
-           color:var(--mut); }
-  .brand b { color:var(--act); font-weight:700; border:1px solid var(--act);
-             border-radius:3px; padding:1px 7px; margin-right:9px; }
-  .runs { font-family:ui-monospace,Consolas,monospace; font-size:11.5px; color:var(--faint);
-          letter-spacing:.04em; }
-  .sub { color:var(--mut); margin:16px 0 4px; max-width:64ch; }
-  .sub strong { color:var(--ink); }
-  .lab { display:flex; align-items:center; gap:12px; margin:30px 0 10px;
-         font-family:ui-monospace,Consolas,monospace; font-size:11px; letter-spacing:.18em;
-         text-transform:uppercase; color:var(--faint); }
-  .lab::after { content:""; flex:1; height:1px; background:var(--line); }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:4px; padding:18px; }
+  body { margin:0; color:var(--ink);
+         background:radial-gradient(ellipse 90% 55% at 50% -12%, rgba(77,141,255,.16), transparent 70%),
+                    radial-gradient(ellipse 45% 35% at 12% -5%, rgba(45,212,191,.10), transparent 70%),
+                    var(--bg);
+         font:15px/1.6 "Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif; }
+  code { font-family:ui-monospace,"Cascadia Mono",Consolas,monospace; font-size:.86em;
+         background:rgba(255,255,255,.06); border:1px solid var(--line);
+         padding:1px 6px; border-radius:6px; }
+  .wrap { max-width:920px; margin:0 auto; padding:0 24px 64px; }
+  .top { position:sticky; top:0; z-index:10; background:rgba(11,14,20,.72);
+         backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+         border-bottom:1px solid var(--line); }
+  .bar { max-width:920px; margin:0 auto; display:flex; align-items:center;
+         justify-content:space-between; gap:12px; flex-wrap:wrap; padding:13px 24px; }
+  .logo { display:inline-flex; align-items:center; gap:10px; font-weight:700; font-size:15px; }
+  .logo .mark { width:28px; height:28px; border-radius:8px; display:grid; place-items:center;
+                background:linear-gradient(135deg,var(--teal),var(--blue));
+                color:#08101d; font-size:11px; font-weight:800;
+                font-family:ui-monospace,Consolas,monospace; }
+  .local { display:inline-flex; align-items:center; gap:8px; font-size:12.5px; color:var(--mut);
+           border:1px solid var(--line); border-radius:999px; padding:5px 13px;
+           background:rgba(255,255,255,.03); }
+  .local::before { content:""; width:7px; height:7px; border-radius:50%; background:var(--ok);
+                   box-shadow:0 0 8px rgba(52,192,124,.8); }
+  .hero { text-align:center; padding:46px 0 30px; }
+  h1 { margin:0 0 12px; font-size:clamp(30px,5vw,44px); line-height:1.08; font-weight:700;
+       letter-spacing:-.025em;
+       font-family:"Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;
+       background:linear-gradient(92deg,var(--teal) 8%,#7cc4ff 55%,var(--blue) 92%);
+       -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .tagline { margin:0 auto; max-width:58ch; color:var(--mut); font-size:15.5px; }
+  .tagline strong { color:var(--ink); font-weight:600; }
+  h2 { font-size:20px; font-weight:650; letter-spacing:-.01em; margin:44px 0 6px;
+       font-family:"Segoe UI Variable Display","Segoe UI",system-ui,sans-serif; }
+  .lede { color:var(--mut); margin:0 0 16px; font-size:14px; }
+  .card { background:linear-gradient(180deg,var(--panel2),var(--panel));
+          border:1px solid var(--line); border-radius:16px; padding:22px;
+          box-shadow:0 10px 30px rgba(0,0,0,.35); }
   summary.h { cursor:pointer; font-weight:600; }
-  #drop { border:1px dashed var(--line2); border-radius:4px; padding:40px 20px; text-align:center;
-          color:var(--mut); cursor:pointer; transition:border-color .15s, background .15s; }
-  #drop:hover, #drop.hot { border-color:var(--act); background:var(--raise); color:var(--ink); }
-  #drop strong { color:var(--ink); }
+  #drop { border:1.5px dashed var(--line2); border-radius:12px; padding:38px 24px;
+          text-align:center; color:var(--mut); cursor:pointer;
+          transition:border-color .2s, background .2s; }
+  #drop:hover, #drop.hot { border-color:var(--blue); background:rgba(77,141,255,.06);
+                           color:var(--ink); }
+  #drop svg { display:block; margin:0 auto 12px; color:var(--blue); opacity:.9; }
+  #drop strong { color:var(--ink); font-size:16px; }
   .files { list-style:none; padding:0; margin:14px 0 0; font-size:13px; color:var(--mut); }
   .files li { padding:2px 0; }
-  button { font-family:ui-monospace,Consolas,monospace; font-size:12px; font-weight:600;
-           letter-spacing:.08em; text-transform:uppercase; color:var(--act-ink);
-           background:var(--act); border:1px solid var(--act); border-radius:3px;
-           padding:9px 18px; cursor:pointer; margin-top:16px; }
+  button { font:600 14px/1 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+           color:#fff; background:linear-gradient(180deg,#4d8dff,#2f6fe0);
+           border:1px solid rgba(255,255,255,.16); border-radius:10px;
+           padding:11px 22px; cursor:pointer; margin-top:16px;
+           transition:filter .15s, transform .05s; box-shadow:0 1px 2px rgba(0,0,0,.4); }
+  button:hover:not(:disabled) { filter:brightness(1.1); }
+  button:active:not(:disabled) { transform:translateY(1px); }
   button:disabled { opacity:.35; cursor:default; }
+  button:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
   .counts { display:flex; gap:8px; flex-wrap:wrap; margin:0 0 18px; }
-  .pill { border:1px solid var(--line2); border-radius:3px; padding:5px 11px; font-size:12px;
-          font-family:ui-monospace,Consolas,monospace; color:var(--mut); }
-  .pill b { font-size:13px; }
+  .pill { display:inline-flex; align-items:center; gap:7px; font-size:12.5px; font-weight:600;
+          padding:5px 12px; border-radius:999px; border:1px solid var(--line);
+          background:rgba(255,255,255,.03); color:var(--mut); }
+  .pill::before { content:""; width:7px; height:7px; border-radius:50%; background:var(--faint); }
+  .pill.ok::before{background:var(--ok)} .pill.rev::before{background:var(--rev)}
+  .pill.man::before{background:var(--man)} .pill.err::before{background:var(--err)}
   .ok b{color:var(--ok)} .rev b{color:var(--rev)} .man b{color:var(--man)} .err b{color:var(--err)}
   table { width:100%; border-collapse:collapse; margin-top:8px; font-size:13.5px; }
   th,td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--line); vertical-align:top; }
   th { color:var(--faint); font-weight:600; font-size:12px; }
-  code { background:#1b1f25; border:1px solid var(--line); padding:0 5px; border-radius:3px;
-         font-size:12px; font-family:ui-monospace,Consolas,monospace; }
   .note { color:var(--mut); font-size:13px; }
-  h2 { font-size:15px; margin:26px 0 6px; }
   .hide { display:none; }
-  a.dl { display:inline-block; margin-top:18px; background:var(--ok); border:1px solid var(--ok);
-         color:#0b1f10; padding:9px 18px; border-radius:3px; text-decoration:none; font-weight:600;
-         font-family:ui-monospace,Consolas,monospace; font-size:12px; letter-spacing:.08em;
-         text-transform:uppercase; }
+  a.dl { display:inline-block; margin-top:18px; background:linear-gradient(180deg,#3bc98a,#27a56d);
+         border:1px solid rgba(255,255,255,.16); color:#06210f; padding:11px 22px;
+         border-radius:10px; text-decoration:none; font-weight:650; font-size:14px;
+         box-shadow:0 1px 2px rgba(0,0,0,.4); }
+  a.dl:hover { filter:brightness(1.07); }
   .err-box { color:var(--err); margin-top:12px; }
   /* per-item result cards */
-  .item { border:1px solid var(--line); border-radius:4px; margin-top:10px; overflow:hidden; }
-  .item-head { display:flex; align-items:center; gap:10px; padding:10px 14px; cursor:pointer;
-               background:var(--raise); user-select:none; }
-  .item-head:hover { background:#20252c; }
+  .item { border:1px solid var(--line); border-radius:12px; margin-top:10px; overflow:hidden;
+          background:rgba(255,255,255,.015); }
+  .item-head { display:flex; align-items:center; gap:10px; padding:11px 14px; cursor:pointer;
+               user-select:none; }
+  .item-head:hover { background:rgba(255,255,255,.03); }
   .item-head .src { font-weight:600; }
   .item-head .cat { color:var(--faint); font-size:12px; }
   .item-head .chev { margin-left:auto; color:var(--faint); transition:transform .15s; }
   .item.open .chev { transform:rotate(90deg); }
-  .badge { font-size:11px; font-weight:600; letter-spacing:.08em; padding:2px 8px;
-           border-radius:3px; border:1px solid var(--line2); color:var(--mut);
-           font-family:ui-monospace,Consolas,monospace; }
-  .badge.ok{color:var(--ok); border-color:rgba(87,183,105,.5)}
-  .badge.rev{color:var(--rev); border-color:rgba(212,166,62,.5)}
-  .badge.man{color:var(--man); border-color:rgba(221,128,71,.5)}
-  .badge.err{color:var(--err); border-color:rgba(226,91,85,.5)}
-  .badge.dql{color:var(--rev); border-color:rgba(212,166,62,.5)}
+  .badge { display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-weight:600;
+           padding:3px 10px; border-radius:999px; border:1px solid var(--line);
+           background:rgba(255,255,255,.03); color:var(--mut); }
+  .badge::before { content:""; width:6px; height:6px; border-radius:50%; background:currentColor; }
+  .badge.ok{color:var(--ok)} .badge.rev{color:var(--rev)} .badge.man{color:var(--man)}
+  .badge.err{color:var(--err)} .badge.dql{color:var(--rev)}
   .item-body { display:none; padding:0 14px 14px; }
   .item.open .item-body { display:block; }
   .item-body .notes { margin:10px 0 4px; padding-left:18px; }
   .art { margin-top:12px; }
   .art-head { display:flex; align-items:center; gap:10px; margin-bottom:4px; }
   .art-head .path { font-family:ui-monospace,Consolas,monospace; font-size:12px; color:var(--mut); }
-  .copy { margin:0 0 0 auto; padding:4px 12px; font-size:11px;
-          background:transparent; border-color:var(--line2); color:var(--mut); }
-  .copy.done { background:var(--ok); border-color:var(--ok); color:#0b1f10; }
-  pre { background:#0d0f12; border:1px solid var(--line); border-radius:3px; padding:12px;
+  .copy { margin:0 0 0 auto; padding:5px 14px; font-size:12px; background:transparent;
+          border-color:var(--line2); color:var(--mut); box-shadow:none; }
+  .copy.done { background:linear-gradient(180deg,#3bc98a,#27a56d); color:#06210f;
+               border-color:rgba(255,255,255,.16); }
+  pre { background:#0a0d13; border:1px solid var(--line); border-radius:10px; padding:12px;
         margin:0; overflow:auto; max-height:340px; font-family:ui-monospace,Consolas,monospace;
         font-size:12.5px; line-height:1.45; color:#c8cfd9; white-space:pre; }
   .toolbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:6px 0 2px; }
-  .toolbar button { margin-top:0; padding:5px 12px; font-size:11px;
-                    background:transparent; border-color:var(--line2); color:var(--mut); }
-  details.remedy { background:var(--raise); border:1px solid var(--line);
-                   border-left:2px solid var(--ok); border-radius:3px; padding:8px 12px; margin:8px 0; }
-  details.remedy summary { cursor:pointer; color:var(--ok); font-weight:600; font-size:13px; }
+  .toolbar button { margin-top:0; padding:6px 14px; font-size:12px; background:transparent;
+                    border-color:var(--line2); color:var(--mut); box-shadow:none; }
+  details.remedy { background:rgba(52,192,124,.06); border:1px solid rgba(52,192,124,.25);
+                   border-radius:10px; padding:8px 12px; margin:8px 0; }
+  details.remedy summary { cursor:pointer; color:#63d69a; font-weight:600; font-size:13px; }
   details.remedy p { margin:8px 0 0; }
   .conn { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
-  .conn input, .conn select { background:#0d0f12; border:1px solid var(--line2); color:var(--ink);
-    border-radius:3px; padding:9px 11px; font:13px ui-monospace,Consolas,monospace; flex:1 1 200px; }
+  .conn input, .conn select { background:rgba(0,0,0,.35); border:1px solid var(--line2);
+    color:var(--ink); border-radius:10px; padding:10px 12px;
+    font:13px ui-monospace,Consolas,monospace; flex:1 1 200px; }
+  .conn input:focus-visible, .conn select:focus-visible { outline:2px solid var(--blue);
+    outline-offset:1px; }
   .conn button { margin-top:0; }
   .disc-item { display:flex; align-items:center; gap:8px; padding:3px 0; font-size:13px; }
   .disc-group { color:var(--faint); font-weight:600; margin:10px 0 2px; font-size:11px;
                 letter-spacing:.14em; text-transform:uppercase;
                 font-family:ui-monospace,Consolas,monospace; }
   /* coverage & caveats */
-  .cov { width:100%; border-collapse:collapse; font-size:13px; margin-top:0; }
-  .cov td { padding:8px 0; border-bottom:0; border-top:1px solid var(--line); }
-  .cov tr:first-child td { border-top:0; padding-top:0; }
-  .cov td.from { width:47%; padding-right:14px; }
-  .cov td.to-arrow { width:26px; color:var(--faint); font-family:ui-monospace,Consolas,monospace; }
-  .cov td.to { color:var(--mut); padding-left:2px; }
-  .cov .det { color:var(--mut); }
-  .also { color:var(--mut); font-size:13px; border-top:1px solid var(--line);
-          margin:10px 0 0; padding-top:10px; }
-  ul.cavs { list-style:none; margin:0; padding:0; font-size:13px; }
-  ul.cavs li { padding:6px 0 6px 18px; position:relative; color:var(--mut); }
-  ul.cavs li::before { content:"—"; position:absolute; left:0; color:var(--faint); }
-  ul.cavs strong { color:var(--ink); font-weight:600; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; }
+  .feat { background:linear-gradient(180deg,var(--panel2),var(--panel));
+          border:1px solid var(--line); border-radius:14px; padding:18px;
+          transition:border-color .2s, transform .2s; }
+  .feat:hover { border-color:var(--line2); transform:translateY(-2px); }
+  .feat .ic { width:36px; height:36px; border-radius:10px; display:grid; place-items:center;
+              background:rgba(77,141,255,.12); color:#7cc4ff; margin-bottom:12px; }
+  .feat h3 { margin:0 0 4px; font-size:14.5px; font-weight:650; }
+  .feat p { margin:0; font-size:13px; color:var(--mut); }
+  .feat p b { color:#9fc3f5; font-weight:600; }
+  .alsonote { color:var(--mut); font-size:13.5px; margin-top:14px; }
+  .cavs { border:1px solid var(--line); border-left:3px solid var(--rev); border-radius:12px;
+          background:linear-gradient(180deg,rgba(224,166,60,.05),transparent 60%), var(--panel);
+          padding:8px 22px 14px; }
+  .cavs ul { list-style:none; margin:0; padding:0; }
+  .cavs li { padding:10px 0 10px 20px; position:relative; color:var(--mut); font-size:13.5px;
+             border-top:1px solid var(--line); }
+  .cavs li:first-child { border-top:0; }
+  .cavs li::before { content:""; position:absolute; left:2px; top:17px; width:7px; height:7px;
+                     border-radius:50%; background:var(--rev); }
+  .cavs strong { color:var(--ink); font-weight:600; }
+  /* deployment order */
+  .plan { margin:8px 0 0; padding-left:22px; }
+  .plan li { margin:12px 0; }
+  .plan li b { font-weight:650; }
+  .plan .arts { margin:4px 0 2px; }
+  .plan .arts code { margin-right:4px; }
+  .gap { border:1px solid rgba(224,166,60,.35); background:rgba(224,166,60,.06);
+         border-radius:10px; padding:12px 16px; margin-top:14px; }
+  .gap ul { margin:6px 0 0; padding-left:18px; }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header>
-    <div class="brand"><b>e2d</b>elastic &#8594; dynatrace</div>
-    <div class="runs">localhost only &middot; nothing leaves this machine</div>
-  </header>
+<header class="top">
+  <div class="bar">
+    <span class="logo"><span class="mark">e2d</span> elastic-to-dynatrace</span>
+    <span class="local">localhost only &mdash; nothing leaves this machine</span>
+  </div>
+</header>
+<main class="wrap">
+  <div class="hero">
+    <h1>Elastic &#8594; Dynatrace</h1>
+    <p class="tagline">Drop your exports &mdash; a <code>.zip</code> or individual
+       <code>.ndjson&nbsp;.esql&nbsp;.conf&nbsp;.json&nbsp;.txt</code> files &mdash; and get
+       dashboards, DQL, alerts and OpenPipeline configs, converted
+       <strong>entirely on this machine</strong>. Nothing is uploaded anywhere.</p>
+  </div>
 
-  <p class="sub">Drop your Elastic exports (a <code>.zip</code>, or individual
-     <code>.ndjson&nbsp;.esql&nbsp;.conf&nbsp;.json&nbsp;.txt</code> files) and get Dynatrace
-     dashboards, DQL, alerts and OpenPipeline configs. Everything runs
-     <strong>on this machine, offline</strong> — nothing is uploaded anywhere.</p>
-
-  <div class="lab">Input</div>
   <details class="card" id="pull-card" style="margin-bottom:16px">
-    <summary class="h">Pull from a live Elastic estate — optional</summary>
+    <summary class="h">Pull from a live Elastic estate &mdash; optional</summary>
     <p class="note">Connect to Kibana/Elasticsearch and pull dashboards, rules, ingest pipelines and
-       watchers via their APIs. Credentials stay in memory on this machine — never written anywhere.</p>
+       watchers via their APIs. Credentials stay in memory on this machine &mdash; never written anywhere.</p>
     <div class="conn">
       <input id="kibana_url" placeholder="Kibana URL (https://kibana:5601)">
       <input id="es_url" placeholder="Elasticsearch URL (https://es:9200)">
@@ -516,8 +571,14 @@ PAGE = r"""<!DOCTYPE html>
 
   <div class="card" id="stage-input">
     <div id="drop">
-      <p><strong>Drop files here</strong> or click to choose</p>
-      <p class="note">Kibana dashboards · ES|QL · Query DSL · KQL/Lucene · Logstash · ingest pipelines</p>
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+      <strong>Drop files here</strong> or click to choose
+      <p class="note" style="margin:6px 0 0">Kibana dashboards &middot; ES|QL &middot; Query DSL
+         &middot; KQL/Lucene &middot; Logstash &middot; ingest pipelines</p>
       <input type="file" id="picker" multiple class="hide">
     </div>
     <ul class="files" id="filelist"></ul>
@@ -525,62 +586,95 @@ PAGE = r"""<!DOCTYPE html>
     <div class="err-box hide" id="err"></div>
   </div>
 
-  <div class="card hide" id="stage-result" style="margin-top:18px"></div>
+  <div class="card hide" id="stage-result" style="margin-top:24px"></div>
 
-  <div class="lab">What this converts</div>
-  <div class="card">
-    <table class="cov">
-      <tr><td class="from">Kibana dashboards <span class="det">(.ndjson) — Lens incl.
-            formulas, TSVB, legacy visualizations, saved searches, controls, Vega with an
-            embedded ES query</span></td>
-          <td class="to-arrow">&#8594;</td>
-          <td class="to">Dynatrace dashboard JSON — DQL tiles, variables, series colours;
-            importable in the Dashboards app or pushed from here</td></tr>
-      <tr><td class="from">ES|QL &middot; Query DSL &middot; KQL &middot; Lucene</td>
-          <td class="to-arrow">&#8594;</td>
-          <td class="to">DQL, linted offline before it reaches you</td></tr>
-      <tr><td class="from">Logstash <span class="det">(.conf)</span> &middot; Elasticsearch
-            ingest pipelines</td>
-          <td class="to-arrow">&#8594;</td>
-          <td class="to">OpenPipeline stages — readable <code>.dpl</code> plus a deployable
-            Terraform module</td></tr>
-      <tr><td class="from">Watchers &middot; Kibana alerting rules
-            <span class="det">(incl. index-threshold and ES-query rules)</span></td>
-          <td class="to-arrow">&#8594;</td>
-          <td class="to">Davis anomaly detectors + Workflows, as Terraform; detectors can
-            also be pushed from here</td></tr>
-      <tr><td class="from">Continuous transforms</td>
-          <td class="to-arrow">&#8594;</td>
-          <td class="to">Rollup DQL with a migration note per transform</td></tr>
-      <tr><td class="from">ILM policies &middot; index templates &middot; enrich policies</td>
-          <td class="to-arrow">&#8594;</td>
-          <td class="to">Written guides — bucket retention, OpenPipeline routing,
-            Grail lookups</td></tr>
-    </table>
-    <p class="also">Every run also writes <code>MIGRATION_REPORT.md</code>, a field manifest
-       per dashboard (<code>*.fields.md</code>), <code>METRICS-GUIDE.md</code> for
-       log&#8594;metric extraction, and a suggested <code>mapping.config.json</code> when your
-       index patterns need rules.</p>
+  <h2>What it converts</h2>
+  <p class="lede">Six artifact families, each with a native Dynatrace landing spot.</p>
+  <div class="grid">
+    <div class="feat">
+      <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/>
+        <rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg></div>
+      <h3>Kibana dashboards</h3>
+      <p>Lens incl. formulas, TSVB, legacy visualizations, saved searches, controls, Vega with
+         an embedded ES query <b>&#8594; dashboard JSON</b> with DQL tiles, variables and
+         series colours &mdash; importable in the Dashboards app, or pushed from here.</p>
+    </div>
+    <div class="feat">
+      <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></div>
+      <h3>Queries</h3>
+      <p>ES|QL, Query DSL, KQL and Lucene <b>&#8594; DQL</b>, linted offline before it
+         reaches you.</p>
+    </div>
+    <div class="feat">
+      <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg></div>
+      <h3>Ingest pipelines</h3>
+      <p>Logstash <code>.conf</code> and Elasticsearch ingest pipelines
+         <b>&#8594; OpenPipeline stages</b> &mdash; readable <code>.dpl</code> plus a deployable
+         Terraform module.</p>
+    </div>
+    <div class="feat">
+      <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/>
+        <path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></div>
+      <h3>Alerts &amp; watchers</h3>
+      <p>Watchers and Kibana alerting rules, incl. index-threshold and ES-query rules
+         <b>&#8594; Davis anomaly detectors + Workflows</b> as Terraform &mdash; detectors can
+         also be pushed from here.</p>
+    </div>
+    <div class="feat">
+      <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 12 12 17 22 12"/></svg></div>
+      <h3>Transforms</h3>
+      <p>Continuous transforms <b>&#8594; rollup DQL</b> with a migration note per
+         transform.</p>
+    </div>
+    <div class="feat">
+      <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/>
+        <line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/>
+        <line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/>
+        <line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/>
+        <line x1="17" y1="16" x2="23" y2="16"/></svg></div>
+      <h3>Cluster config</h3>
+      <p>ILM policies, index templates and enrich policies <b>&#8594; written guides</b> &mdash;
+         bucket retention, OpenPipeline routing, Grail lookups.</p>
+    </div>
   </div>
+  <p class="alsonote">Every run also writes <code>MIGRATION_REPORT.md</code> with a
+     <b>deployment-order plan</b>, a field manifest per dashboard (<code>*.fields.md</code>),
+     <code>METRICS-GUIDE.md</code> for log&#8594;metric extraction, and a suggested
+     <code>mapping.config.json</code> when your index patterns need rules.</p>
 
-  <div class="lab">Caveats</div>
-  <ul class="cavs">
-    <li><strong>Maps and truly-custom Vega panels</strong> become placeholder tiles flagged
-        MANUAL — rebuild those by hand in Dynatrace.</li>
-    <li><strong>Lens formulas with no DQL equivalent</strong> fall back to a flagged
-        <code>count()</code> placeholder; nothing is ever converted silently wrong.</li>
-    <li><strong>A converted tile renders empty — with no error —</strong> when a custom field
-        it queries isn't ingested in Dynatrace. Check each dashboard's
-        <code>.fields.md</code> manifest before trusting a blank chart.</li>
-    <li><strong>Index patterns without a mapping rule default to <code>logs</code></strong>;
-        review the suggested <code>mapping.config.json</code> and re-run to make routing
-        explicit.</li>
-    <li><strong>Alert thresholds and evaluation windows are best-effort</strong> — review each
-        anomaly detector before enabling it in production.</li>
-    <li><strong>Canvas workpads, ML jobs and SLOs have no converter.</strong> Unrecognised
-        files are listed as skipped, with a reason — never silently dropped.</li>
-  </ul>
-</div>
+  <h2>Before you trust the output</h2>
+  <p class="lede">Honest limits &mdash; each one is flagged in the report, never hidden.</p>
+  <div class="cavs">
+    <ul>
+      <li><strong>Maps and truly-custom Vega panels</strong> become placeholder tiles flagged
+          MANUAL &mdash; rebuild those by hand in Dynatrace.</li>
+      <li><strong>Lens formulas with no DQL equivalent</strong> fall back to a flagged
+          <code>count()</code> placeholder; nothing is ever converted silently wrong.</li>
+      <li><strong>A converted tile renders empty &mdash; with no error &mdash;</strong> when a
+          custom field it queries isn't ingested in Dynatrace. Check each dashboard's
+          <code>.fields.md</code> manifest before trusting a blank chart.</li>
+      <li><strong>Index patterns without a mapping rule default to <code>logs</code></strong>;
+          review the suggested <code>mapping.config.json</code> and re-run to make routing
+          explicit.</li>
+      <li><strong>Alert thresholds and evaluation windows are best-effort</strong> &mdash;
+          review each anomaly detector before enabling it in production.</li>
+      <li><strong>Canvas workpads, ML jobs and SLOs have no converter.</strong> Unrecognised
+          files are listed as skipped, with a reason &mdash; never silently dropped.</li>
+    </ul>
+  </div>
+</main>
 
 <script>
 const $ = s => document.querySelector(s);
@@ -703,6 +797,30 @@ function esc(s){ return (s||"").replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;',
 
 let LAST = null;  // last render payload, for expand/collapse-all
 
+function planBlock(p) {
+  if (!p || !p.steps || !p.steps.length) return "";
+  let h = `<h2>Deployment order</h2>
+           <p class="note">Do the steps in order — each one creates what the next depends on.</p>
+           <ol class="plan">`;
+  for (const s of p.steps) {
+    h += `<li><b>${esc(s.title)}</b> <span class="note">— ${esc(s.why)}</span>
+            <div class="arts">${s.items.map(i => `<code>${esc(i)}</code>`).join(" ")}</div>
+            <span class="note">${esc(s.how)}</span></li>`;
+  }
+  h += `</ol>`;
+  if (p.field_gaps && p.field_gaps.length) {
+    const lead = p.have_pipelines
+      ? "These dashboards query custom fields that no converted pipeline produces — their tiles will render empty until the fields are ingested some other way:"
+      : "No pipelines were part of this run, so these dashboards' custom fields must already exist in your tenant — verify before importing:";
+    h += `<div class="gap"><b>Field gaps to close.</b> <span class="note">${lead}</span><ul>`;
+    for (const g of p.field_gaps)
+      h += `<li class="note"><code>${esc(g.dashboard)}</code> — ` +
+           g.fields.map(f => `<code>${esc(f)}</code>`).join(", ") + `</li>`;
+    h += `</ul></div>`;
+  }
+  return h;
+}
+
 function itemCard(it, idx) {
   const dqlNotes = (it.notes||[]).filter(n => n.includes("[DQL:"));
   const open = it.status !== "OK" ? " open" : "";   // auto-expand things needing a look
@@ -751,6 +869,7 @@ function render(d) {
     <span class="pill man"><b>${c.MANUAL}</b> manual</span>
     ${c.ERROR ? `<span class="pill err"><b>${c.ERROR}</b> error</span>` : ""}
   </div>`;
+  h += planBlock(d.plan);
   if (d.items.length) {
     h += `<div class="toolbar">
             <button data-expand>Expand all</button>

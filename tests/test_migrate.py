@@ -37,8 +37,10 @@ def test_report_renders_plain_english():
     assert "migration report" in md.lower()
     assert "ready to use" in md
     assert "What needs your attention" in md and "ruby has no target" in md
-    assert "🔐 Security" in md and "p.conf: password" in md
-    assert "Next steps" in md
+    assert "## Security" in md and "p.conf: password" in md
+    assert "Deployment order" in md
+    # pipelines must be deployed before the dashboards that need their fields
+    assert md.index("Deploy ingest pipelines") < md.index("Import dashboards")
 
 
 def test_classify_recognises_more_shapes(tmp_path):
@@ -84,6 +86,31 @@ def test_vis_only_export_synthesizes_dashboard(tmp_path):
     assert "summarize" in list(tiles.values())[0]["query"]
     assert any("no dashboard, only saved visualizations" in n
                for it in s.items for n in it.notes)
+
+
+def test_plan_orders_steps_and_finds_field_gaps():
+    from e2d.plan import build_plan, fields_produced
+
+    produced = fields_produced([
+        'parse content, "IPADDR:client_ip \' \' LD:request_uri"',
+        "fieldsAdd geo = ipToGeolocation(client_ip), http.status = toLong(http.status)",
+    ])
+    assert {"client_ip", "request_uri", "geo", "http.status"} <= set(produced)
+
+    s = MigrationSummary(items=[
+        Item("dashboard", "dash.ndjson", "OK", ["dashboards/d.json"]),
+        Item("pipeline", "p.conf", "OK", ["pipelines/p.dpl"]),
+        Item("alert", "w.json", "REVIEW", ["alerts/w.alert.md"]),
+    ])
+    s.dashboard_fields = {"dash.ndjson": ["client_ip", "session_id"]}
+    s.pipeline_fields = {"p.conf": produced}
+    plan = build_plan(s)
+    titles = [st["title"] for st in plan["steps"]]
+    assert titles.index("Deploy ingest pipelines") < titles.index("Import dashboards")
+    assert titles.index("Import dashboards") < titles.index("Enable alerting last")
+    # session_id is queried by the dashboard but produced by no pipeline
+    assert plan["field_gaps"] == [{"dashboard": "dash.ndjson", "fields": ["session_id"]}]
+    assert plan["have_pipelines"] is True
 
 
 def test_export_with_no_convertible_objects_is_reported_skipped(tmp_path):
