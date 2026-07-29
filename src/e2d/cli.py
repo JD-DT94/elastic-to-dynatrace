@@ -280,6 +280,16 @@ def cmd_verify(args: argparse.Namespace) -> int:
     return verify_cli(args)
 
 
+def cmd_backfill(args: argparse.Namespace) -> int:
+    from e2d.backfill import backfill_cli
+    return backfill_cli(args)
+
+
+def cmd_parity(args: argparse.Namespace) -> int:
+    from e2d.parity import parity_cli
+    return parity_cli(args)
+
+
 def cmd_web(args: argparse.Namespace) -> int:
     from e2d.web import serve
     config = _load_config(args.config)
@@ -390,6 +400,60 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Also execute each valid query and flag ones returning no data "
                         "(a tile with a missing custom attribute renders blank, not broken)")
     v.set_defaults(func=cmd_verify)
+
+    pr = sub.add_parser(
+        "parity",
+        help="Compare counts between the original Elastic queries and the converted "
+             "DQL over the same window (dual-ship validation).")
+    pr.add_argument("input", help="Folder holding the original Elastic query files")
+    pr.add_argument("--es-url", required=True, help="Elasticsearch URL")
+    pr.add_argument("--index", required=True, help="Index or pattern both stacks receive")
+    pr.add_argument("--es-token-env", default="ES_API_KEY",
+                    help="Env var holding the Elasticsearch API key (default: ES_API_KEY)")
+    pr.add_argument("--es-auth", choices=["ApiKey", "Bearer"], default="ApiKey")
+    pr.add_argument("--env-url", help="Dynatrace env URL (or set DYNATRACE_ENV_URL)")
+    pr.add_argument("--token-env", default="DT_API_TOKEN",
+                    help="Env var holding the Dynatrace token (default: DT_API_TOKEN)")
+    pr.add_argument("--window", default="2h",
+                    help="Relative window both sides are counted over (default: 2h)")
+    pr.add_argument("--tolerance", type=float, default=0.02,
+                    help="Relative drift that still counts as a match (default: 0.02)")
+    pr.add_argument("--config", help="Mapping config JSON")
+    pr.add_argument("--insecure", action="store_true", help="Skip TLS verification for Elasticsearch")
+    pr.set_defaults(func=cmd_parity)
+
+    bf = sub.add_parser(
+        "backfill",
+        help="Copy historical logs from Elasticsearch into Dynatrace despite the "
+             "24h ingest wall: records are re-stamped into the accepted window and "
+             "the true event time is kept in an original_timestamp attribute.")
+    bf.add_argument("--es-url", required=True, help="Elasticsearch URL (https://es:9200)")
+    bf.add_argument("--index", required=True, help="Index or pattern to read (e.g. logs-app-*)")
+    bf.add_argument("--from", dest="time_from", required=True,
+                    help="Start of the original time window (ISO 8601)")
+    bf.add_argument("--to", dest="time_to", required=True,
+                    help="End of the original time window (ISO 8601)")
+    bf.add_argument("--query", help="Optional Lucene query_string to narrow the pull")
+    bf.add_argument("--timestamp-field", default="@timestamp",
+                    help="Source timestamp field (default: @timestamp)")
+    bf.add_argument("--es-token-env", default="ES_API_KEY",
+                    help="Env var holding the Elasticsearch API key (default: ES_API_KEY)")
+    bf.add_argument("--es-auth", choices=["ApiKey", "Bearer"], default="ApiKey",
+                    help="Elasticsearch Authorization scheme (default: ApiKey)")
+    bf.add_argument("--env-url", help="Dynatrace env URL (or set DYNATRACE_ENV_URL)")
+    bf.add_argument("--token-env", default="DT_API_TOKEN",
+                    help="Env var holding the Dynatrace token (default: DT_API_TOKEN)")
+    bf.add_argument("--stamp", choices=["spread", "now"], default="spread",
+                    help="spread: map the original range onto the last ~23h, keeping shape "
+                         "(default); now: stamp everything with ingest time")
+    bf.add_argument("--page-size", type=int, default=1000, help="ES page size (default: 1000)")
+    bf.add_argument("--limit", type=int, default=0, help="Stop after N records (0 = all)")
+    bf.add_argument("--classic", action="store_true",
+                    help="Use the classic /api/v2/logs/ingest endpoint with an Api-Token "
+                         "(scope logs.ingest) instead of the platform endpoint")
+    bf.add_argument("--insecure", action="store_true", help="Skip TLS verification for Elasticsearch")
+    bf.add_argument("--apply", action="store_true", help="Actually ingest (default: dry run)")
+    bf.set_defaults(func=cmd_backfill)
 
     w = sub.add_parser("web",
                        help="Launch the local web GUI (offline; data stays on this machine).")

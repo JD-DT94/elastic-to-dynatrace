@@ -75,11 +75,29 @@ def build_plan(summary) -> dict:
          "Check each dashboard's *.fields.md manifest against live data "
          "(fetch logs | fieldsSummary <field>).",
          sorted(getattr(summary, "dashboard_fields", {})))
+    step("Repoint shippers",
+         "Once pipelines are ready to process what arrives, move (or dual-ship) "
+         "the collection edge so data starts flowing.",
+         "Apply each shippers/<name>.otel.yaml collector config, or add the "
+         "dual-ship output from CUTOVER-PLAN.md to the existing shippers.",
+         by_cat.get("shipper", []))
     step("Import dashboards",
          "Safe once their fields are flowing.",
          "Upload each dashboards/*.json in the Dynatrace Dashboards app, or "
          "push via the deploy panel / e2d push.",
          by_cat.get("dashboard", []))
+    step("Create SLOs",
+         "SLOs read live data; create them after dashboards confirm the data "
+         "looks right.",
+         "Follow each slos/<name>.slo.md: paste the DQL SLI into the SLO app "
+         "or POST it via the SLO API.",
+         by_cat.get("slo", []))
+    step("Recreate synthetic monitors",
+         "Independent of log data; needs only the target endpoints reachable "
+         "from the chosen locations.",
+         "POST each synthetics/<name>.monitor.json via the Synthetic API, "
+         "after picking locations (see the .md guide).",
+         by_cat.get("synthetic", []))
     step("Recreate transforms as rollups",
          "Rollup queries only make sense against live data.",
          "Follow each transforms/*.transform.md note.",

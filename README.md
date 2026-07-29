@@ -22,12 +22,16 @@ your files are never uploaded anywhere.
 | Logstash `.conf` and Elasticsearch ingest pipelines | OpenPipeline DQL/DPL stages |
 | ES\|QL, Query DSL, KQL, Lucene | DQL |
 | Continuous transforms | Rollup DQL |
-| ILM policies, index templates, enrich policies | Migration guides (bucket retention, routing, lookups) |
+| Kibana SLOs (custom-KQL indicators) | DQL SLI queries + objective guide |
+| Filebeat configs (`filebeat.yml`) | OpenTelemetry Collector configs shipping to Dynatrace |
+| Heartbeat monitors (`heartbeat.yml`) | Dynatrace Synthetic HTTP monitor definitions |
+| ILM policies, index templates, enrich policies | Migration guides (bucket retention, routing, lookups) + `CUTOVER-PLAN.md` |
 
-Every run also produces a plain-English `MIGRATION_REPORT.md` (notes grouped
-by rebuild / double-check / FYI), per-dashboard field manifests (`*.fields.md`
+Every run also produces a plain-English `MIGRATION_REPORT.md` with a
+deployment-order plan, per-dashboard field manifests (`*.fields.md`
 — what must exist at ingest or a tile renders empty), a `METRICS-GUIDE.md`
-with log→metric extraction best practice, and a suggested mapping config when
+with log→metric extraction best practice, a `CUTOVER-PLAN.md` dual-ship
+schedule when ILM policies are present, and a suggested mapping config when
 index patterns need rules.
 
 ## CLI
@@ -39,8 +43,16 @@ e2d dashboard export.ndjson -o out/         # dashboards only
 e2d verify out/ --env-url https://<env>.apps.dynatrace.com          # DQL check
 e2d verify out/ --data ...                  # + flag tiles that return no data
 e2d push out/dashboards --env-url ... --apply                       # deploy
+e2d parity out/ --es-url https://es:9200 --index logs-*             # dual-ship count check
+e2d backfill --es-url ... --index logs-* --from 2026-01-01T00:00:00Z \
+             --to 2026-02-01T00:00:00Z --apply    # history past the 24h ingest wall
 e2d web                                     # local GUI
 ```
+
+Dynatrace rejects log records older than 24 hours, so history cannot be
+replayed as-is. `e2d backfill` re-stamps records into the accepted window and
+keeps the true event time in an `original_timestamp` attribute; query it with
+`fetch logs | filter backfilled == "true" and original_timestamp >= "..."`.
 
 Use a `mapping.config.json` to route index patterns to data objects and
 rename fields — see `samples/mapping.config.json`. Drop it in with your

@@ -275,11 +275,43 @@
          bucket retention, OpenPipeline routing and Grail lookups.</p>
       <button class="try" data-eg="config">Try an example</button>
     </div>
+    <div class="feat">
+      <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/><line x1="22" y1="12" x2="18" y2="12"/>
+        <line x1="6" y1="12" x2="2" y2="12"/><line x1="12" y1="6" x2="12" y2="2"/>
+        <line x1="12" y1="22" x2="12" y2="18"/></svg></div>
+      <h3>SLOs</h3>
+      <p>Kibana SLO definitions <b>&#8594; DQL SLI queries</b> with the objective and
+         window carried over, ready for the SLO app or API. APM indicators are flagged
+         for the service-native path.</p>
+      <button class="try" data-eg="slo">Try an example</button>
+    </div>
+    <div class="feat">
+      <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></div>
+      <h3>Shippers</h3>
+      <p>Filebeat configs <b>&#8594; OpenTelemetry Collector configs</b> shipping straight
+         to Dynatrace; Metricbeat modules are mapped to OneAgent and Extensions Hub
+         advice.</p>
+      <button class="try" data-eg="shipper">Try an example</button>
+    </div>
+    <div class="feat">
+      <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/>
+        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
+      <h3>Synthetic monitors</h3>
+      <p>Heartbeat HTTP monitors <b>&#8594; Dynatrace Synthetic monitor definitions</b>;
+         TCP and ICMP checks are flagged for network availability monitors.</p>
+      <button class="try" data-eg="synthetic">Try an example</button>
+    </div>
   </div>
   <p class="alsonote">Every run also writes <code>MIGRATION_REPORT.md</code> with a
      deployment-order plan, a field manifest per dashboard
      (<code>*.fields.md</code>), <code>METRICS-GUIDE.md</code> for log&#8594;metric
-     extraction, and a suggested <code>mapping.config.json</code> when your index patterns
+     extraction, a <code>CUTOVER-PLAN.md</code> dual-ship schedule when ILM policies are present, and a suggested <code>mapping.config.json</code> when your index patterns
      need rules.</p>
 
   <h2>Limitations</h2>
@@ -297,8 +329,12 @@
           explicit.</li>
       <li><strong>Alert thresholds and evaluation windows are best-effort.</strong> Review
           each anomaly detector before enabling it in production.</li>
-      <li><strong>Canvas workpads, ML jobs and SLOs have no converter.</strong> Unrecognised
+      <li><strong>Canvas workpads and ML jobs have no converter.</strong> Unrecognised
           files are listed as skipped, with a reason.</li>
+      <li><strong>Dynatrace rejects log records older than 24 hours,</strong> so history
+          cannot be replayed as-is. <code>e2d backfill</code> re-stamps it and keeps the
+          true event time in <code>original_timestamp</code>; <code>CUTOVER-PLAN.md</code>
+          schedules the dual-ship overlap instead.</li>
     </ul>
   </div>
 
@@ -591,6 +627,18 @@ const EXAMPLES = {
     text: JSON.stringify({ policy: { phases: {
       hot: { min_age: "0ms", actions: { rollover: { max_size: "50gb", max_age: "7d" } } },
       delete: { min_age: "30d", actions: { delete: {} } } } } }) },
+  slo: { file: "example_slo.json",
+    text: JSON.stringify({ name: "Checkout availability",
+      indicator: { type: "sli.kql.custom", params: { index: "logs-checkout-*",
+        filter: 'service.name: "checkout"', good: "status < 500",
+        total: "status >= 100" } },
+      objective: { target: 0.995 },
+      timeWindow: { duration: "30d", type: "rolling" },
+      budgetingMethod: "occurrences" }) },
+  shipper: { file: "example_filebeat.yml",
+    text: 'filebeat.inputs:\n  - type: filestream\n    id: app-logs\n    paths:\n      - /var/log/app/*.log\n    multiline.pattern: \'^\\d{4}-\'\n    multiline.negate: true\n    multiline.match: after\noutput.elasticsearch:\n  hosts: ["es:9200"]\n' },
+  synthetic: { file: "example_heartbeat.yml",
+    text: 'heartbeat.monitors:\n  - type: http\n    id: api-check\n    name: API health\n    schedule: \'@every 60s\'\n    urls: ["https://api.example.com/health"]\n    check.response.status: [200]\n' },
 };
 
 document.querySelectorAll("[data-eg]").forEach(b => b.addEventListener("click", async () => {

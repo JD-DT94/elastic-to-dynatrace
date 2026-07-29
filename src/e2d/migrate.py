@@ -46,6 +46,8 @@ class MigrationSummary:
     metrics_advisories: int = 0                             # tiles that could become ingest metrics
     dashboard_fields: Dict[str, List[str]] = field(default_factory=dict)  # source -> custom fields queried
     pipeline_fields: Dict[str, List[str]] = field(default_factory=dict)   # source -> fields produced at ingest
+    ilm_policies: Dict[str, Optional[int]] = field(default_factory=dict)  # policy -> retention days (None: no delete)
+    template_patterns: Dict[str, List[str]] = field(default_factory=dict)  # template -> index patterns
 
     def counts(self):
         c = {"OK": 0, "REVIEW": 0, "MANUAL": 0, "ERROR": 0}
@@ -116,11 +118,28 @@ def classify(path: Path, text: Optional[str] = None) -> str:
                 body = doc.get(k)
                 if isinstance(body, dict) and "enrich_fields" in body:
                     return "enrich_policy"
+            if "indicator" in doc and ("objective" in doc or "budgetingMethod" in doc):
+                return "slo"
             if any(k in doc for k in ("query", "aggs", "aggregations")):
                 return "querydsl"
         return "unknown"
     if suf in _TEXTQ:
         return "querytext"
+    if suf in (".yml", ".yaml"):
+        if text is None:
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                return "unknown"
+        try:
+            from e2d.yamlite import parse as _yparse
+            from e2d.beats import detect_beat
+            beat = detect_beat(_yparse(text))
+            if beat:
+                return beat
+        except Exception:
+            pass
+        return "unknown"
     return "unknown"
 
 
@@ -321,6 +340,69 @@ def _do_alert(text: str, src: str, out: Path, config: MappingConfig, summary: Mi
                               res.report.format_deduped()))
 
 
+def _do_beat(text: str, src: str, out: Path, kind: str, summary: MigrationSummary) -> None:
+    from e2d.yamlite import parse as yparse
+    from e2d.beats import (translate_filebeat, translate_heartbeat,
+                           render_shipper_guide, _section)
+    doc = yparse(text)
+    base = Path(src).stem
+    if kind == "filebeat":
+        res = translate_filebeat(doc, name=Path(src).name)
+        sdir = out / "shippers"
+        sdir.mkdir(parents=True, exist_ok=True)
+        outs = []
+        if res.otel_yaml:
+            (sdir / f"{base}.otel.yaml").write_text(res.otel_yaml, encoding="utf-8")
+            outs.append(f"shippers/{base}.otel.yaml")
+        (sdir / f"{base}.md").write_text(
+            render_shipper_guide(Path(src).name, "filebeat", res), encoding="utf-8")
+        outs.append(f"shippers/{base}.md")
+        summary.items.append(Item("shipper", src, _status(res.report), outs,
+                                  res.report.format_deduped()))
+    elif kind == "heartbeat":
+        res = translate_heartbeat(doc)
+        sdir = out / "synthetics"
+        sdir.mkdir(parents=True, exist_ok=True)
+        outs = []
+        if res.monitors:
+            (sdir / f"{base}.monitors.json").write_text(
+                json.dumps(res.monitors, indent=2) + "\n", encoding="utf-8")
+            outs.append(f"synthetics/{base}.monitors.json")
+        (sdir / f"{base}.md").write_text(
+            render_shipper_guide(Path(src).name, "heartbeat", res), encoding="utf-8")
+        outs.append(f"synthetics/{base}.md")
+        summary.items.append(Item("synthetic", src, _status(res.report), outs,
+                                  res.report.format_deduped()))
+    else:  # metricbeat
+        modules = sorted({str(m.get("module", "?")) for m in _section(doc, "metricbeat", "modules")})
+        sdir = out / "shippers"
+        sdir.mkdir(parents=True, exist_ok=True)
+        from e2d.beats import ShipperResult
+        stub = ShipperResult()
+        (sdir / f"{base}.md").write_text(
+            render_shipper_guide(Path(src).name, "metricbeat", stub, modules=modules),
+            encoding="utf-8")
+        summary.items.append(Item("shipper", src, "REVIEW", [f"shippers/{base}.md"],
+                                  ["Metricbeat has no mechanical conversion; wrote a "
+                                   "guide mapping its modules to OneAgent and the "
+                                   "Extensions Hub."]))
+
+
+def _do_slo(text: str, src: str, out: Path, config: MappingConfig, summary: MigrationSummary) -> None:
+    from e2d.slo import translate_slo, render_slo
+    base = Path(src).stem
+    res = translate_slo(text, config, name=base)
+    sdir = out / "slos"
+    sdir.mkdir(parents=True, exist_ok=True)
+    outs = [f"slos/{base}.slo.md"]
+    (sdir / f"{base}.slo.md").write_text(render_slo(res), encoding="utf-8")
+    if res.dql:
+        (sdir / f"{base}.dql").write_text(res.dql + "\n", encoding="utf-8")
+        outs.insert(0, f"slos/{base}.dql")
+    summary.items.append(Item("slo", src, _status(res.report), outs,
+                              res.report.format_deduped()))
+
+
 def _do_transform(text: str, src: str, out: Path, config: MappingConfig, summary: MigrationSummary) -> None:
     from e2d.transforms import translate_transform, render_transform
     base = Path(src).stem
@@ -365,6 +447,9 @@ def _do_config_advice(text: str, src: str, kind: str, out: Path,
         L.append("")
         phases = doc.get("policy", {}).get("phases", {})
         delete_age = phases.get("delete", {}).get("min_age", "—")
+        from e2d.cutover import parse_min_age_days
+        summary.ilm_policies[base] = parse_min_age_days(
+            delete_age if delete_age != "—" else None)
         L.append(f"- Total lifetime in Elastic (delete phase `min_age`): **{delete_age}**")
         L.append("- Dynatrace: **Settings → Storage management → Bucket** — create/pick a "
                  "bucket with matching `retentionDays` and route these logs to it "
@@ -376,6 +461,7 @@ def _do_config_advice(text: str, src: str, kind: str, out: Path,
         L.append("")
         pats = doc.get("index_patterns", [])
         if pats:
+            summary.template_patterns[base] = list(pats)
             L.append(f"- Elastic index patterns: {', '.join('`%s`' % p for p in pats)}")
         L.append("- Dynatrace: index templates (mappings/settings) are unnecessary — Grail is "
                  "schema-on-read. What to carry over:")
@@ -473,6 +559,10 @@ def run_migration(in_dir: str, out_dir: str, config: Optional[MappingConfig] = N
                 _do_pipeline(text, rel, out, kind, summary)
             elif kind in ("watcher", "alerting_rule"):
                 _do_alert(text, rel, out, config, summary)
+            elif kind == "slo":
+                _do_slo(text, rel, out, config, summary)
+            elif kind in ("filebeat", "heartbeat", "metricbeat"):
+                _do_beat(text, rel, out, kind, summary)
             elif kind == "transform":
                 _do_transform(text, rel, out, config, summary)
             elif kind in ("ilm_policy", "index_template", "enrich_policy"):
@@ -492,14 +582,20 @@ def run_migration(in_dir: str, out_dir: str, config: Optional[MappingConfig] = N
 
     _suggest_config(summary, out)
 
+    if summary.ilm_policies or summary.template_patterns:
+        from e2d.cutover import render_cutover_plan
+        (out / "CUTOVER-PLAN.md").write_text(
+            render_cutover_plan(summary.ilm_policies, summary.template_patterns),
+            encoding="utf-8")
+
     (out / "MIGRATION_REPORT.md").write_text(render_report(summary), encoding="utf-8")
     return summary
 
 
 _SKIP_REASONS = {
-    ".yml": "YAML support file (e.g. a Logstash lookup table) — if it is reference data, "
-            "upload it as OpenPipeline reference data or a Grail lookup source",
-    ".yaml": "YAML support file — see .yml note",
+    ".yml": "YAML file that is not a recognisable Beats config; if it is reference data "
+            "(e.g. a Logstash lookup table), upload it as OpenPipeline reference data",
+    ".yaml": "YAML file that is not a recognisable Beats config; see the .yml note",
     ".md": "documentation, nothing to convert",
     ".txt": "not recognised as KQL/Lucene query lines",
     ".zip": "archives are read when uploaded directly; unzip and re-run if this was an export",
@@ -533,8 +629,22 @@ def render_report(summary: MigrationSummary) -> str:
     from e2d.plan import build_plan, render_plan_md
     L.extend(render_plan_md(build_plan(summary)))
 
+    if summary.ilm_policies or summary.template_patterns:
+        L.append("## Cutover")
+        L.append("")
+        L.append("Dynatrace rejects log records older than 24 hours, so history "
+                 "cannot be replayed after the fact. **`CUTOVER-PLAN.md`** next to "
+                 "this report turns your ILM retention into a dual-ship schedule, "
+                 "Grail bucket definitions, and a decommission timeline. Use "
+                 "`e2d backfill` for the indexes whose history must live in "
+                 "Dynatrace (records are re-stamped; the true event time is kept "
+                 "in `original_timestamp`).")
+        L.append("")
+
     for cat, title in (("dashboard", "Dashboards"), ("query", "Queries"), ("pipeline", "Pipelines"),
-                       ("alert", "Alerts & watchers"), ("transform", "Transforms"),
+                       ("alert", "Alerts & watchers"), ("slo", "SLOs"),
+                       ("shipper", "Shippers & agents"), ("synthetic", "Synthetic monitors"),
+                       ("transform", "Transforms"),
                        ("config", "Cluster config (ILM / templates / enrich)")):
         rows = [it for it in summary.items if it.category == cat]
         if not rows:
