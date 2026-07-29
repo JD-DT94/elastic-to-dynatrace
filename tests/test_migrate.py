@@ -86,6 +86,17 @@ def test_vis_only_export_synthesizes_dashboard(tmp_path):
                for it in s.items for n in it.notes)
 
 
+def test_export_with_no_convertible_objects_is_reported_skipped(tmp_path):
+    # Canvas workpads (and other unsupported saved-object types) must show up in
+    # `skipped` with a reason — never vanish from the report silently.
+    export = {"id": "wp1", "type": "canvas-workpad", "attributes": {"name": "board"}}
+    (tmp_path / "in").mkdir()
+    (tmp_path / "in" / "canvas.ndjson").write_text(json.dumps(export), encoding="utf-8")
+    s = run_migration(str(tmp_path / "in"), str(tmp_path / "out"))
+    assert not s.items
+    assert any("canvas.ndjson" in sk and "canvas-workpad" in sk for sk in s.skipped)
+
+
 def test_suggested_config_and_metrics_guide(tmp_path):
     panels = [{"panelIndex": "1", "type": "visualization",
                "gridData": {"x": 0, "y": 0, "w": 24, "h": 12},

@@ -195,6 +195,12 @@ def _do_kibana(text: str, src: str, out: Path, config: MappingConfig, summary: M
         if synth is not None:
             dashboards = [synth]
             synthesized = True
+    if not dashboards:
+        kinds = sorted({o.type for o in export.objects}) or ["no objects"]
+        summary.skipped.append(
+            f"{src} — Kibana export contains no dashboards, visualizations or saved "
+            f"searches (found: {', '.join(kinds)}); nothing convertible")
+        return
 
     ddir = out / "dashboards"
     for d in dashboards:
