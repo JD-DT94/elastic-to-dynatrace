@@ -521,13 +521,13 @@ def render_report(summary: MigrationSummary) -> str:
     L.append(f"We looked at your export and converted **{total}** item(s): "
              f"**{ready} ready to use**, **{attention} need a quick human check**.")
     L.append("")
-    L.append("Everything ran **on this machine, offline** — none of your data left it.")
+    L.append("Everything ran **on this machine, offline**; none of your data left it.")
     L.append("")
     L.append("| Status | Meaning |")
     L.append("|--------|---------|")
-    L.append("| OK | Converted cleanly — ready to use. |")
+    L.append("| OK | Converted cleanly, ready to use. |")
     L.append("| REVIEW | Converted, but double-check it (reasons below). |")
-    L.append("| MANUAL | Couldn't fully convert — needs a person. |")
+    L.append("| MANUAL | Couldn't fully convert, needs a person. |")
     L.append("")
 
     from e2d.plan import build_plan, render_plan_md
@@ -555,7 +555,7 @@ def render_report(summary: MigrationSummary) -> str:
                  "automatic adjustments (usually fine, listed for completeness).")
         L.append("")
         for it in flagged:
-            L.append(f"### `{it.source}` — {it.status}")
+            L.append(f"### `{it.source}`: {it.status}")
             L.append("")
             notes = list(dict.fromkeys(it.notes))
             manual = [n for n in notes if n.startswith("[MANUAL]")]
@@ -596,7 +596,7 @@ def render_report(summary: MigrationSummary) -> str:
         L.append("## Consider metrics for the busiest tiles")
         L.append("")
         L.append(f"**{summary.metrics_advisories}** time-series tile(s) chart raw log queries. "
-                 "They work as-is — but for tiles you keep long-term, extracting the number "
+                 "They work as-is, but for tiles you keep long-term, extracting the number "
                  "into a **metric at ingest** is cheaper, faster, and retained longer. "
                  "**`METRICS-GUIDE.md`** in this folder walks through each one: the "
                  "OpenPipeline metric-extraction settings and the `timeseries` query to "

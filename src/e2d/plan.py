@@ -60,7 +60,7 @@ def build_plan(summary) -> dict:
 
     step("Storage & routing decisions",
          "Bucket retention and OpenPipeline routing decide where data lands and "
-         "how long it lives — settle them before logs start flowing.",
+         "how long it lives. Settle them before logs start flowing.",
          "Work through each guide under config_advice/.",
          by_cat.get("config", []))
     step("Deploy ingest pipelines",
@@ -70,8 +70,8 @@ def build_plan(summary) -> dict:
          "stages into OpenPipeline in the UI.",
          by_cat.get("pipeline", []))
     step("Verify fields are ingested",
-         "A tile whose field is missing renders empty with no error — this is "
-         "the step that catches it before anyone stares at a blank dashboard.",
+         "A tile whose field is missing renders empty with no error. This step "
+         "catches that before anyone stares at a blank dashboard.",
          "Check each dashboard's *.fields.md manifest against live data "
          "(fetch logs | fieldsSummary <field>).",
          sorted(getattr(summary, "dashboard_fields", {})))
@@ -85,7 +85,7 @@ def build_plan(summary) -> dict:
          "Follow each transforms/*.transform.md note.",
          by_cat.get("transform", []))
     step("Enable alerting last",
-         "Detectors evaluate live data — enabling them before data flows just "
+         "Detectors evaluate live data; enabling them before data flows just "
          "fires false alarms. Review each threshold and window first.",
          "terraform apply each alerts_tf/<name>/ folder, or push detectors from "
          "the deploy panel; keep them disabled until validated.",
@@ -107,12 +107,12 @@ def render_plan_md(plan: dict) -> List[str]:
     """The plan as markdown lines for MIGRATION_REPORT.md."""
     L: List[str] = ["## Deployment order", ""]
     if not plan["steps"]:
-        L.append("Nothing to deploy — no artifacts converted.")
+        L.append("Nothing to deploy; no artifacts were converted.")
         return L
-    L.append("Do the steps in order — each one creates what the next depends on.")
+    L.append("Deploy in this order. Each step creates what the next depends on.")
     L.append("")
     for s in plan["steps"]:
-        L.append(f"{s['n']}. **{s['title']}** — {s['why']}")
+        L.append(f"{s['n']}. **{s['title']}.** {s['why']}")
         arts = ", ".join(f"`{a}`" for a in s["items"])
         L.append(f"   - Covers: {arts}")
         L.append(f"   - How: {s['how']}")
@@ -122,11 +122,11 @@ def render_plan_md(plan: dict) -> List[str]:
         L.append("")
         if plan["have_pipelines"]:
             L.append("These dashboards query custom fields that **no converted pipeline "
-                     "produces** — their tiles will render empty until the fields are "
+                     "produces**. Their tiles will render empty until the fields are "
                      "ingested some other way:")
         else:
             L.append("No pipelines were part of this run, so these dashboards' custom "
-                     "fields must already exist in your tenant — verify before "
+                     "fields must already exist in your tenant. Verify before "
                      "importing:")
         L.append("")
         for g in plan["field_gaps"]:

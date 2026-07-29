@@ -330,6 +330,12 @@ def make_handler(sessions: Sessions):
                     sid = self.headers.get("X-Session", "")
                     sel = json.loads(self._read_body() or b"[]")
                     self._json(200, {"files": sessions.pull(sid, sel)})
+                elif self.path == "/query":
+                    body = json.loads(self._read_body() or b"{}")
+                    from e2d.quick import convert_query
+                    self._json(200, convert_query(body.get("query", ""),
+                                                  body.get("lang", "auto"),
+                                                  sessions.config))
                 elif self.path == "/deploy":
                     sid = self.headers.get("X-Session", "")
                     self._json(200, sessions.deploy(sid, json.loads(self._read_body() or b"{}")))
@@ -405,8 +411,6 @@ PAGE = r"""<!DOCTYPE html>
   .local { display:inline-flex; align-items:center; gap:8px; font-size:12.5px; color:var(--mut);
            border:1px solid var(--line); border-radius:999px; padding:5px 13px;
            background:rgba(255,255,255,.03); }
-  .local::before { content:""; width:7px; height:7px; border-radius:50%; background:var(--ok);
-                   box-shadow:0 0 8px rgba(52,192,124,.8); }
   .hero { text-align:center; padding:46px 0 30px; }
   h1 { margin:0 0 12px; font-size:clamp(30px,5vw,44px); line-height:1.08; font-weight:700;
        letter-spacing:-.025em;
@@ -444,9 +448,6 @@ PAGE = r"""<!DOCTYPE html>
   .pill { display:inline-flex; align-items:center; gap:7px; font-size:12.5px; font-weight:600;
           padding:5px 12px; border-radius:999px; border:1px solid var(--line);
           background:rgba(255,255,255,.03); color:var(--mut); }
-  .pill::before { content:""; width:7px; height:7px; border-radius:50%; background:var(--faint); }
-  .pill.ok::before{background:var(--ok)} .pill.rev::before{background:var(--rev)}
-  .pill.man::before{background:var(--man)} .pill.err::before{background:var(--err)}
   .ok b{color:var(--ok)} .rev b{color:var(--rev)} .man b{color:var(--man)} .err b{color:var(--err)}
   table { width:100%; border-collapse:collapse; margin-top:8px; font-size:13.5px; }
   th,td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--line); vertical-align:top; }
@@ -472,7 +473,6 @@ PAGE = r"""<!DOCTYPE html>
   .badge { display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-weight:600;
            padding:3px 10px; border-radius:999px; border:1px solid var(--line);
            background:rgba(255,255,255,.03); color:var(--mut); }
-  .badge::before { content:""; width:6px; height:6px; border-radius:50%; background:currentColor; }
   .badge.ok{color:var(--ok)} .badge.rev{color:var(--rev)} .badge.man{color:var(--man)}
   .badge.err{color:var(--err)} .badge.dql{color:var(--rev)}
   .item-body { display:none; padding:0 14px 14px; }
@@ -495,6 +495,10 @@ PAGE = r"""<!DOCTYPE html>
                    border-radius:10px; padding:8px 12px; margin:8px 0; }
   details.remedy summary { cursor:pointer; color:#63d69a; font-weight:600; font-size:13px; }
   details.remedy p { margin:8px 0 0; }
+  .qbox { width:100%; min-height:110px; resize:vertical; background:rgba(0,0,0,.35);
+          border:1px solid var(--line2); border-radius:10px; color:var(--ink);
+          padding:12px; font:13px/1.5 ui-monospace,Consolas,monospace; }
+  .qbox:focus-visible { outline:2px solid var(--blue); outline-offset:1px; }
   .conn { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
   .conn input, .conn select { background:rgba(0,0,0,.35); border:1px solid var(--line2);
     color:var(--ink); border-radius:10px; padding:10px 12px;
@@ -522,11 +526,9 @@ PAGE = r"""<!DOCTYPE html>
           background:linear-gradient(180deg,rgba(224,166,60,.05),transparent 60%), var(--panel);
           padding:8px 22px 14px; }
   .cavs ul { list-style:none; margin:0; padding:0; }
-  .cavs li { padding:10px 0 10px 20px; position:relative; color:var(--mut); font-size:13.5px;
+  .cavs li { padding:10px 0; color:var(--mut); font-size:13.5px;
              border-top:1px solid var(--line); }
   .cavs li:first-child { border-top:0; }
-  .cavs li::before { content:""; position:absolute; left:2px; top:17px; width:7px; height:7px;
-                     border-radius:50%; background:var(--rev); }
   .cavs strong { color:var(--ink); font-weight:600; }
   /* deployment order */
   .plan { margin:8px 0 0; padding-left:22px; }
@@ -543,22 +545,22 @@ PAGE = r"""<!DOCTYPE html>
 <header class="top">
   <div class="bar">
     <span class="logo"><span class="mark">e2d</span> elastic-to-dynatrace</span>
-    <span class="local">localhost only &mdash; nothing leaves this machine</span>
+    <span class="local">localhost only, nothing leaves this machine</span>
   </div>
 </header>
 <main class="wrap">
   <div class="hero">
     <h1>Elastic &#8594; Dynatrace</h1>
-    <p class="tagline">Drop your exports &mdash; a <code>.zip</code> or individual
-       <code>.ndjson&nbsp;.esql&nbsp;.conf&nbsp;.json&nbsp;.txt</code> files &mdash; and get
-       dashboards, DQL, alerts and OpenPipeline configs, converted
-       <strong>entirely on this machine</strong>. Nothing is uploaded anywhere.</p>
+    <p class="tagline">Drop your exports, a <code>.zip</code> or individual
+       <code>.ndjson&nbsp;.esql&nbsp;.conf&nbsp;.json&nbsp;.txt</code> files, and get
+       dashboards, DQL, alerts and OpenPipeline configs.
+       <strong>Everything runs on this machine.</strong> Nothing is uploaded anywhere.</p>
   </div>
 
   <details class="card" id="pull-card" style="margin-bottom:16px">
-    <summary class="h">Pull from a live Elastic estate &mdash; optional</summary>
-    <p class="note">Connect to Kibana/Elasticsearch and pull dashboards, rules, ingest pipelines and
-       watchers via their APIs. Credentials stay in memory on this machine &mdash; never written anywhere.</p>
+    <summary class="h">Pull from a live Elastic estate (optional)</summary>
+    <p class="note">Connect to Kibana/Elasticsearch and pull dashboards, rules, ingest pipelines
+       and watchers via their APIs. Credentials are kept in memory and never written to disk.</p>
     <div class="conn">
       <input id="kibana_url" placeholder="Kibana URL (https://kibana:5601)">
       <input id="es_url" placeholder="Elasticsearch URL (https://es:9200)">
@@ -586,10 +588,28 @@ PAGE = r"""<!DOCTYPE html>
     <div class="err-box hide" id="err"></div>
   </div>
 
+  <div class="card" id="quick" style="margin-top:16px">
+    <h2 style="margin:0 0 4px;font-size:17px">Paste a query</h2>
+    <p class="note" style="margin:0 0 10px">Paste one ES|QL, Query DSL, KQL or Lucene query.
+       The DQL appears below with any warnings, ready to copy.</p>
+    <textarea id="qin" class="qbox" spellcheck="false"
+      placeholder="FROM logs-* | WHERE status &gt;= 500 | STATS count = COUNT() BY host.name"></textarea>
+    <div class="conn">
+      <select id="qlang">
+        <option value="auto">Detect language</option>
+        <option value="esql">ES|QL</option>
+        <option value="dsl">Query DSL (JSON)</option>
+        <option value="kql">KQL</option>
+        <option value="lucene">Lucene</option>
+      </select>
+      <button id="qgo">Convert query</button>
+    </div>
+    <div id="qout"></div>
+  </div>
+
   <div class="card hide" id="stage-result" style="margin-top:24px"></div>
 
   <h2>What it converts</h2>
-  <p class="lede">Six artifact families, each with a native Dynatrace landing spot.</p>
   <div class="grid">
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -597,9 +617,9 @@ PAGE = r"""<!DOCTYPE html>
         <rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/>
         <rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg></div>
       <h3>Kibana dashboards</h3>
-      <p>Lens incl. formulas, TSVB, legacy visualizations, saved searches, controls, Vega with
-         an embedded ES query <b>&#8594; dashboard JSON</b> with DQL tiles, variables and
-         series colours &mdash; importable in the Dashboards app, or pushed from here.</p>
+      <p>Lens incl. formulas, TSVB, legacy visualizations, saved searches, controls, and Vega
+         with an embedded ES query <b>&#8594; dashboard JSON</b> with DQL tiles, variables and
+         series colours. Import in the Dashboards app or push from here.</p>
     </div>
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -615,7 +635,7 @@ PAGE = r"""<!DOCTYPE html>
         <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg></div>
       <h3>Ingest pipelines</h3>
       <p>Logstash <code>.conf</code> and Elasticsearch ingest pipelines
-         <b>&#8594; OpenPipeline stages</b> &mdash; readable <code>.dpl</code> plus a deployable
+         <b>&#8594; OpenPipeline stages</b>: a readable <code>.dpl</code> plus a deployable
          Terraform module.</p>
     </div>
     <div class="feat">
@@ -625,8 +645,8 @@ PAGE = r"""<!DOCTYPE html>
         <path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></div>
       <h3>Alerts &amp; watchers</h3>
       <p>Watchers and Kibana alerting rules, incl. index-threshold and ES-query rules
-         <b>&#8594; Davis anomaly detectors + Workflows</b> as Terraform &mdash; detectors can
-         also be pushed from here.</p>
+         <b>&#8594; Davis anomaly detectors + Workflows</b> as Terraform. Detectors can also
+         be pushed from here.</p>
     </div>
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -645,33 +665,32 @@ PAGE = r"""<!DOCTYPE html>
         <line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/>
         <line x1="17" y1="16" x2="23" y2="16"/></svg></div>
       <h3>Cluster config</h3>
-      <p>ILM policies, index templates and enrich policies <b>&#8594; written guides</b> &mdash;
-         bucket retention, OpenPipeline routing, Grail lookups.</p>
+      <p>ILM policies, index templates and enrich policies <b>&#8594; written guides</b> for
+         bucket retention, OpenPipeline routing and Grail lookups.</p>
     </div>
   </div>
   <p class="alsonote">Every run also writes <code>MIGRATION_REPORT.md</code> with a
-     <b>deployment-order plan</b>, a field manifest per dashboard (<code>*.fields.md</code>),
+     deployment-order plan, a field manifest per dashboard (<code>*.fields.md</code>),
      <code>METRICS-GUIDE.md</code> for log&#8594;metric extraction, and a suggested
      <code>mapping.config.json</code> when your index patterns need rules.</p>
 
-  <h2>Before you trust the output</h2>
-  <p class="lede">Honest limits &mdash; each one is flagged in the report, never hidden.</p>
+  <h2>Limitations</h2>
   <div class="cavs">
     <ul>
       <li><strong>Maps and truly-custom Vega panels</strong> become placeholder tiles flagged
-          MANUAL &mdash; rebuild those by hand in Dynatrace.</li>
+          MANUAL. Rebuild those by hand in Dynatrace.</li>
       <li><strong>Lens formulas with no DQL equivalent</strong> fall back to a flagged
-          <code>count()</code> placeholder; nothing is ever converted silently wrong.</li>
-      <li><strong>A converted tile renders empty &mdash; with no error &mdash;</strong> when a
-          custom field it queries isn't ingested in Dynatrace. Check each dashboard's
+          <code>count()</code> placeholder. Nothing is converted silently wrong.</li>
+      <li><strong>A converted tile renders empty, with no error,</strong> when a custom field
+          it queries isn't ingested in Dynatrace. Check each dashboard's
           <code>.fields.md</code> manifest before trusting a blank chart.</li>
-      <li><strong>Index patterns without a mapping rule default to <code>logs</code></strong>;
-          review the suggested <code>mapping.config.json</code> and re-run to make routing
+      <li><strong>Index patterns without a mapping rule default to <code>logs</code>.</strong>
+          Review the suggested <code>mapping.config.json</code> and re-run to make routing
           explicit.</li>
-      <li><strong>Alert thresholds and evaluation windows are best-effort</strong> &mdash;
-          review each anomaly detector before enabling it in production.</li>
+      <li><strong>Alert thresholds and evaluation windows are best-effort.</strong> Review
+          each anomaly detector before enabling it in production.</li>
       <li><strong>Canvas workpads, ML jobs and SLOs have no converter.</strong> Unrecognised
-          files are listed as skipped, with a reason &mdash; never silently dropped.</li>
+          files are listed as skipped, with a reason.</li>
     </ul>
   </div>
 </main>
@@ -800,21 +819,21 @@ let LAST = null;  // last render payload, for expand/collapse-all
 function planBlock(p) {
   if (!p || !p.steps || !p.steps.length) return "";
   let h = `<h2>Deployment order</h2>
-           <p class="note">Do the steps in order — each one creates what the next depends on.</p>
+           <p class="note">Deploy in this order. Each step creates what the next depends on.</p>
            <ol class="plan">`;
   for (const s of p.steps) {
-    h += `<li><b>${esc(s.title)}</b> <span class="note">— ${esc(s.why)}</span>
+    h += `<li><b>${esc(s.title)}.</b> <span class="note">${esc(s.why)}</span>
             <div class="arts">${s.items.map(i => `<code>${esc(i)}</code>`).join(" ")}</div>
             <span class="note">${esc(s.how)}</span></li>`;
   }
   h += `</ol>`;
   if (p.field_gaps && p.field_gaps.length) {
     const lead = p.have_pipelines
-      ? "These dashboards query custom fields that no converted pipeline produces — their tiles will render empty until the fields are ingested some other way:"
-      : "No pipelines were part of this run, so these dashboards' custom fields must already exist in your tenant — verify before importing:";
+      ? "These dashboards query custom fields that no converted pipeline produces. Their tiles stay empty until the fields are ingested some other way:"
+      : "No pipelines were part of this run, so these dashboards' custom fields must already exist in your tenant. Verify before importing:";
     h += `<div class="gap"><b>Field gaps to close.</b> <span class="note">${lead}</span><ul>`;
     for (const g of p.field_gaps)
-      h += `<li class="note"><code>${esc(g.dashboard)}</code> — ` +
+      h += `<li class="note"><code>${esc(g.dashboard)}</code>: ` +
            g.fields.map(f => `<code>${esc(f)}</code>`).join(", ") + `</li>`;
     h += `</ul></div>`;
   }
@@ -838,7 +857,7 @@ function itemCard(it, idx) {
     h += `<ul class="notes">` + notes.map(n=>`<li class="note">${esc(n)}</li>`).join("") + `</ul>`;
   for (const r of (it.remediation||[])) {
     h += `<details class="remedy">
-            <summary>How to fix — ${esc(r.title)}</summary>
+            <summary>How to fix: ${esc(r.title)}</summary>
             <p class="note"><b>What it is.</b> ${esc(r.what)}</p>
             <p class="note"><b>In Dynatrace.</b> ${esc(r.fix)}</p>
           </details>`;
@@ -862,7 +881,7 @@ function itemCard(it, idx) {
 function render(d) {
   LAST = d;
   const c = d.counts;
-  let h = `<h2 style="margin-top:0">Done — ${d.total} item(s) converted</h2>`;
+  let h = `<h2 style="margin-top:0">Converted ${d.total} item(s)</h2>`;
   h += `<div class="counts">
     <span class="pill ok"><b>${c.OK}</b> ready</span>
     <span class="pill rev"><b>${c.REVIEW}</b> review</span>
@@ -880,7 +899,7 @@ function render(d) {
   }
   if (d.secrets.length) {
     h += `<h2>Possible secrets in your inputs</h2>
-          <p class="note">Not copied into any output — swap in your Dynatrace-side secrets when deploying.</p><ul>`;
+          <p class="note">Not copied into any output. Swap in your Dynatrace-side secrets when deploying.</p><ul>`;
     h += d.secrets.map(s=>`<li class="note"><code>${esc(s)}</code></li>`).join("") + `</ul>`;
   }
   if (d.skipped.length) {
@@ -902,7 +921,7 @@ function deployPanel(d) {
     <summary class="h">Deploy to Dynatrace</summary>
     <p class="note">Pushes <b>${nDash} dashboard(s)</b> (Document API) and the anomaly detectors from
       <b>${nAlert} alert(s)</b> (Settings API) straight to your tenant. Credentials persist on this
-      machine only. ${nPipe ? `The <b>${nPipe}</b> pipeline(s) deploy via <code>terraform apply</code> —
+      machine only. ${nPipe ? `The <b>${nPipe}</b> pipeline(s) deploy via <code>terraform apply</code>;
       download the bundle.` : ""}</p>
     <p class="note">Token scopes: <code>document:documents:write</code>,
       <code>settings:objects:write</code>, <code>storage:*:read</code>,
@@ -949,6 +968,36 @@ result.addEventListener("click", e => {
 result.addEventListener("input", e => {
   if (e.target.id === "dt_env") { deployEnv = e.target.value; saveDeployCreds(); }
   if (e.target.id === "dt_token") { deployToken = e.target.value; saveDeployCreds(); }
+});
+
+// ---- paste-a-query converter -------------------------------------------
+function qResult(r) {
+  if (r.error) return `<p class="err-box">${esc(r.error)}</p>`;
+  let h = `<div class="art"><div class="art-head">
+      <span class="badge ${SCLASS[r.status] || ""}">${esc(r.status)}</span>
+      <span class="path">${esc(r.lang)}</span>
+      <button class="copy" data-copy>Copy</button></div>
+      <pre>${esc(r.dql)}</pre></div>`;
+  if (r.notes && r.notes.length)
+    h += `<ul class="notes">` + r.notes.map(n => `<li class="note">${esc(n)}</li>`).join("") + `</ul>`;
+  return h;
+}
+
+$("#qgo").addEventListener("click", async () => {
+  const q = $("#qin").value.trim(), out = $("#qout"), btn = $("#qgo");
+  if (!q) { out.innerHTML = `<p class="note">Paste a query first.</p>`; return; }
+  btn.disabled = true; btn.textContent = "Converting…";
+  try {
+    const r = await post("/query", JSON.stringify({ query: q, lang: $("#qlang").value }),
+                         { "Content-Type": "application/json" });
+    out.innerHTML = qResult(r);
+  } catch (e) {
+    out.innerHTML = `<p class="err-box">${esc(e.message)}</p>`;
+  } finally { btn.disabled = false; btn.textContent = "Convert query"; }
+});
+$("#qout").addEventListener("click", e => {
+  const b = e.target.closest("[data-copy]");
+  if (b) copyText(b.closest(".art").querySelector("pre").textContent, b);
 });
 
 async function copyText(text, btn) {
