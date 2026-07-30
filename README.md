@@ -53,6 +53,11 @@ Dynatrace rejects log records older than 24 hours, so history cannot be
 replayed as-is. `e2d backfill` re-stamps records into the accepted window and
 keeps the true event time in an `original_timestamp` attribute; query it with
 `fetch logs | filter backfilled == "true" and original_timestamp >= "..."`.
+Use `e2d backfill --es-url ... --discover` to list indices with doc counts and
+time ranges, pass a comma-separated `--index` list to move several in one run,
+or do the whole thing point-and-click in the local GUI (`e2d web`): the
+"Backfill historical logs" panel discovers indices, dry-runs with a sample
+record, ships with live progress, and verifies the landed counts in Grail.
 
 Use a `mapping.config.json` to route index patterns to data objects and
 rename fields — see `samples/mapping.config.json`. Drop it in with your

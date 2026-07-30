@@ -232,6 +232,77 @@ class Sessions:
             "terraform": {"pipelines": pipe},
         }
 
+    # -- backfill historical logs (background job per session) --------------- #
+
+    def backfill_discover(self, sid: str, cfg: dict) -> dict:
+        self._dirs(sid)  # validate session
+        from e2d.backfill import discover_indices
+        return {"indices": discover_indices(
+            cfg.get("es_url", ""), cfg.get("token", ""),
+            cfg.get("auth_scheme", "ApiKey"), cfg.get("pattern") or "*",
+            verify_tls=cfg.get("verify_tls", True))}
+
+    def backfill_start(self, sid: str, cfg: dict) -> dict:
+        self._dirs(sid)
+        rows = [{"index": s.get("index", ""), "from": s.get("from", ""),
+                 "to": s.get("to", ""), "state": "queued", "scanned": 0,
+                 "prepared": 0, "sent": 0, "batches": 0, "skipped": 0,
+                 "errors": [], "sample": None, "dql_count": None}
+                for s in cfg.get("selection", []) if s.get("index")]
+        if not rows:
+            raise ValueError("no indices selected")
+        job = {"state": "running", "apply": bool(cfg.get("apply")), "rows": rows}
+        with self._lock:
+            self._sessions[sid]["backfill"] = job
+
+        def work():
+            from e2d.backfill import run_backfill
+            for row in rows:
+                row["state"] = "running"
+                try:
+                    def prog(st, row=row):
+                        row.update(scanned=st.scanned, prepared=st.prepared,
+                                   sent=st.sent, batches=st.batches,
+                                   skipped=st.skipped)
+                        if st.sample is not None and row["sample"] is None:
+                            row["sample"] = st.sample
+                    stats = run_backfill(
+                        es_url=cfg.get("es_url", ""), es_token=cfg.get("token", ""),
+                        es_auth=cfg.get("auth_scheme", "ApiKey"),
+                        index=row["index"], time_from=row["from"],
+                        time_to=row["to"], query=cfg.get("query") or None,
+                        env_url=cfg.get("env_url", ""),
+                        dt_token=cfg.get("dt_token", ""),
+                        stamp=cfg.get("stamp", "spread"), apply=job["apply"],
+                        limit=int(cfg.get("limit") or 0),
+                        verify_tls=cfg.get("verify_tls", True),
+                        out=None, on_progress=prog)
+                    row["errors"] = stats.errors
+                    if job["apply"] and cfg.get("env_url") and cfg.get("dt_token"):
+                        # count what actually landed, by source index
+                        from e2d.parity import _dql_count
+                        n, _err = _dql_count(
+                            cfg["env_url"], cfg["dt_token"],
+                            'fetch logs, from: now() - 24h\n'
+                            '| filter backfilled == "true" and source.index == '
+                            f'"{row["index"]}"\n'
+                            '| summarize parity_count = count()')
+                        row["dql_count"] = n
+                    row["state"] = "error" if stats.errors else "done"
+                except Exception as e:  # one bad index never kills the job
+                    row["errors"] = [str(e)]
+                    row["state"] = "error"
+            job["state"] = "done"
+
+        threading.Thread(target=work, daemon=True).start()
+        return {"started": len(rows), "apply": job["apply"]}
+
+    def backfill_status(self, sid: str) -> dict:
+        job = self._dirs(sid).get("backfill")
+        if job is None:
+            raise KeyError("no backfill job in this session")
+        return job
+
     # -- pull from a live Elastic estate (creds kept in memory only) --------- #
 
     def connect(self, sid: str, cfg: dict) -> None:
@@ -330,6 +401,17 @@ def make_handler(sessions: Sessions):
                     sid = self.headers.get("X-Session", "")
                     sel = json.loads(self._read_body() or b"[]")
                     self._json(200, {"files": sessions.pull(sid, sel)})
+                elif self.path == "/backfill/discover":
+                    sid = self.headers.get("X-Session", "")
+                    self._json(200, sessions.backfill_discover(
+                        sid, json.loads(self._read_body() or b"{}")))
+                elif self.path == "/backfill/run":
+                    sid = self.headers.get("X-Session", "")
+                    self._json(200, sessions.backfill_start(
+                        sid, json.loads(self._read_body() or b"{}")))
+                elif self.path == "/backfill/status":
+                    sid = self.headers.get("X-Session", "")
+                    self._json(200, sessions.backfill_status(sid))
                 elif self.path == "/query":
                     body = json.loads(self._read_body() or b"{}")
                     from e2d.quick import convert_query
@@ -506,6 +588,10 @@ PAGE = r"""<!DOCTYPE html>
   .conn input:focus-visible, .conn select:focus-visible { outline:2px solid var(--blue);
     outline-offset:1px; }
   .conn button { margin-top:0; }
+  #bf_list input { background:rgba(0,0,0,.35); border:1px solid var(--line2);
+    color:var(--ink); border-radius:8px; padding:6px 8px; width:200px;
+    font:12px ui-monospace,Consolas,monospace; }
+  #bf_list table, #bf_out table { font-size:12.5px; }
   .disc-item { display:flex; align-items:center; gap:8px; padding:3px 0; font-size:13px; }
   .disc-group { color:var(--faint); font-weight:600; margin:10px 0 2px; font-size:11px;
                 letter-spacing:.14em; text-transform:uppercase;
@@ -573,6 +659,33 @@ PAGE = r"""<!DOCTYPE html>
       <button id="discover">Connect & discover</button>
     </div>
     <div id="discovery"></div>
+  </details>
+
+  <details class="card" id="backfill-card" style="margin-bottom:16px">
+    <summary class="h">Backfill historical logs (past the 24h wall)</summary>
+    <p class="note">Streams old logs straight from Elasticsearch into Dynatrace: each record
+       is re-stamped into the accepted window and keeps its true event time in
+       <code>original_timestamp</code>. Fill in the Elastic connection in the panel above,
+       then discover, pick indices and windows, dry run, and backfill.</p>
+    <div class="conn">
+      <input id="bf_pattern" placeholder="Index pattern (default: *)">
+      <button id="bf_discover">Discover indices</button>
+    </div>
+    <div id="bf_list"></div>
+    <div id="bf_ctl" class="hide">
+      <div class="conn">
+        <input id="bf_env" placeholder="Dynatrace env URL (https://abc12345.apps.dynatrace.com)">
+        <input id="bf_token" type="password" placeholder="Dynatrace token (logs ingest)">
+        <select id="bf_stamp">
+          <option value="spread">Spread over last 23h (keeps order)</option>
+          <option value="now">Stamp everything with now</option>
+        </select>
+        <input id="bf_query" placeholder="Optional Lucene filter (level:ERROR)">
+        <button id="bf_dry">Dry run</button>
+        <button id="bf_go" style="background:linear-gradient(180deg,#3bc98a,#27a56d)">Backfill</button>
+      </div>
+      <div id="bf_out"></div>
+    </div>
   </details>
 
   <div class="card" id="stage-input">
@@ -1141,6 +1254,108 @@ document.querySelectorAll("[data-eg]").forEach(b => b.addEventListener("click", 
   document.getElementById("stage-input").scrollIntoView({ behavior: "smooth" });
   go.click();
 }));
+// ---- backfill historical logs -------------------------------------------
+let bfSession = null, bfTimer = null;
+$("#bf_env").value = deployEnv;
+$("#bf_token").value = deployToken;
+
+$("#bf_discover").addEventListener("click", async () => {
+  const btn = $("#bf_discover"); btn.disabled = true; btn.textContent = "Discovering…";
+  const list = $("#bf_list");
+  try {
+    if (!bfSession) bfSession = (await post("/session")).session;
+    const data = await post("/backfill/discover", JSON.stringify({
+      es_url: $("#es_url").value.trim(), token: $("#token").value,
+      auth_scheme: $("#auth_scheme").value,
+      pattern: $("#bf_pattern").value.trim() || "*",
+    }), { "X-Session": bfSession, "Content-Type": "application/json" });
+    const idx = data.indices || [];
+    if (!idx.length) { list.innerHTML = `<p class="note">No matching indices.</p>`; return; }
+    list.innerHTML = `<table><tr><th></th><th>Index</th><th>Docs</th><th>Size</th>
+        <th>From (ISO)</th><th>To (ISO)</th></tr>` +
+      idx.map(r => `<tr>
+        <td><input type="checkbox" class="bf-pick" checked data-index="${esc(r.index)}"></td>
+        <td><code>${esc(r.index)}</code></td>
+        <td class="note">${(r.docs || 0).toLocaleString()}</td>
+        <td class="note">${esc(r.size || "")}</td>
+        <td><input class="bf-from" value="${esc(r.oldest || "")}"></td>
+        <td><input class="bf-to" value="${esc(r.newest || "")}"></td>
+      </tr>`).join("") + `</table>`;
+    $("#bf_ctl").classList.remove("hide");
+  } catch (e) {
+    list.innerHTML = `<p class="err-box">Discovery failed: ${esc(e.message)}</p>`;
+  } finally { btn.disabled = false; btn.textContent = "Discover indices"; }
+});
+
+function bfSelection() {
+  return [...document.querySelectorAll(".bf-pick:checked")].map(c => {
+    const tr = c.closest("tr");
+    return { index: c.dataset.index,
+             from: tr.querySelector(".bf-from").value.trim(),
+             to: tr.querySelector(".bf-to").value.trim() };
+  }).filter(s => s.from && s.to);
+}
+
+async function bfRun(apply) {
+  const out = $("#bf_out");
+  const sel = bfSelection();
+  if (!sel.length) {
+    out.innerHTML = `<p class="note">Pick at least one index with a from/to window.</p>`;
+    return;
+  }
+  deployEnv = $("#bf_env").value.trim(); deployToken = $("#bf_token").value;
+  saveDeployCreds();
+  if (apply && (!deployEnv || !deployToken)) {
+    out.innerHTML = `<p class="err-box">Backfill needs the Dynatrace env URL and token.</p>`;
+    return;
+  }
+  try {
+    await post("/backfill/run", JSON.stringify({
+      es_url: $("#es_url").value.trim(), token: $("#token").value,
+      auth_scheme: $("#auth_scheme").value, selection: sel,
+      query: $("#bf_query").value.trim(), stamp: $("#bf_stamp").value,
+      env_url: deployEnv, dt_token: deployToken, apply,
+    }), { "X-Session": bfSession, "Content-Type": "application/json" });
+    out.innerHTML = `<p class="note">${apply ? "Backfilling…" : "Dry run…"}</p>`;
+    clearInterval(bfTimer);
+    bfTimer = setInterval(bfPoll, 1500);
+  } catch (e) { out.innerHTML = `<p class="err-box">${esc(e.message)}</p>`; }
+}
+
+async function bfPoll() {
+  let job;
+  try {
+    job = await post("/backfill/status", "", { "X-Session": bfSession });
+  } catch (e) { return; /* transient poll error: keep trying */ }
+  const rows = job.rows.map(r => {
+    const cls = { done: "ok", error: "err", running: "rev" }[r.state] || "";
+    let verify = "";
+    if (r.dql_count != null)
+      verify = r.dql_count >= r.sent
+        ? ` · verified: ${r.dql_count.toLocaleString()} in Grail`
+        : ` · in Grail so far: ${r.dql_count.toLocaleString()} of ${r.sent.toLocaleString()} (ingest lags a little)`;
+    let h = `<tr><td><span class="badge ${cls}">${esc(r.state)}</span></td>
+      <td><code>${esc(r.index)}</code></td>
+      <td class="note">scanned ${r.scanned.toLocaleString()} ·
+        ${job.apply ? "sent" : "would send"} ${r.sent.toLocaleString()}
+        in ${r.batches} batch(es)${r.skipped ? ` · ${r.skipped} skipped` : ""}${verify}</td></tr>`;
+    if (r.errors && r.errors.length)
+      h += `<tr><td></td><td colspan="2" class="err-box">${r.errors.map(esc).join("; ")}</td></tr>`;
+    if (r.sample && !job.apply)
+      h += `<tr><td></td><td colspan="2"><details><summary class="note">sample record</summary>
+            <pre>${esc(JSON.stringify(r.sample, null, 2).slice(0, 1500))}</pre></details></td></tr>`;
+    return h;
+  }).join("");
+  $("#bf_out").innerHTML = `<table>${rows}</table>` +
+    (job.state === "done" ? `<p class="note">${job.apply
+      ? 'Done. Query history with: <code>fetch logs | filter backfilled == "true" and original_timestamp >= "..."</code>'
+      : "Dry run complete. Nothing was sent; press Backfill to ship."}</p>` : "");
+  if (job.state === "done") clearInterval(bfTimer);
+}
+
+$("#bf_dry").addEventListener("click", () => bfRun(false));
+$("#bf_go").addEventListener("click", () => bfRun(true));
+
 </script>
 </body>
 </html>

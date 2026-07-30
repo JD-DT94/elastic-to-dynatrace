@@ -57,6 +57,7 @@ class BackfillStats:
     batches: int = 0
     skipped: int = 0                       # records without a usable timestamp
     errors: List[str] = field(default_factory=list)
+    sample: Optional[Dict[str, Any]] = None  # first shaped record, for inspection
 
 
 # --------------------------------------------------------------------------- #
@@ -212,6 +213,50 @@ def ingest_batch(env_url: str, token: str, batch: List[Dict[str, Any]],
     return None
 
 
+def discover_indices(es_url: str, token: str, auth_scheme: str,
+                     pattern: str = "*", timestamp_field: str = "@timestamp",
+                     verify_tls: bool = True, max_indices: int = 200) -> List[Dict[str, Any]]:
+    """List non-system indices matching `pattern` with doc counts, on-disk size,
+    and the oldest/newest timestamp each one holds, so a caller can offer a
+    pick-what-to-backfill table."""
+    import requests
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"{auth_scheme} {token}"
+    base = es_url.rstrip("/")
+    r = requests.get(f"{base}/_cat/indices/{pattern}"
+                     "?format=json&h=index,docs.count,store.size&s=index",
+                     headers=headers, timeout=60, verify=verify_tls)
+    r.raise_for_status()
+    rows: List[Dict[str, Any]] = []
+    for row in r.json():
+        idx = row.get("index", "")
+        if not idx or idx.startswith("."):
+            continue
+        entry: Dict[str, Any] = {"index": idx,
+                                 "docs": int(row.get("docs.count") or 0),
+                                 "size": row.get("store.size") or "",
+                                 "oldest": None, "newest": None}
+        try:
+            rr = requests.post(
+                f"{base}/{idx}/_search", headers=headers, timeout=30,
+                verify=verify_tls,
+                json={"size": 0, "aggs": {
+                    "mn": {"min": {"field": timestamp_field,
+                                   "format": "strict_date_time"}},
+                    "mx": {"max": {"field": timestamp_field,
+                                   "format": "strict_date_time"}}}})
+            aggs = rr.json().get("aggregations") or {}
+            entry["oldest"] = (aggs.get("mn") or {}).get("value_as_string")
+            entry["newest"] = (aggs.get("mx") or {}).get("value_as_string")
+        except Exception:
+            pass  # index without the timestamp field: still listed, no range
+        rows.append(entry)
+        if len(rows) >= max_indices:
+            break
+    return rows
+
+
 # --------------------------------------------------------------------------- #
 # driver
 # --------------------------------------------------------------------------- #
@@ -221,7 +266,8 @@ def run_backfill(es_url: str, es_token: str, es_auth: str, index: str,
                  env_url: str, dt_token: str, stamp: str, apply: bool,
                  page_size: int = 1000, limit: int = 0,
                  timestamp_field: str = "@timestamp", classic: bool = False,
-                 verify_tls: bool = True, out=sys.stderr) -> BackfillStats:
+                 verify_tls: bool = True, out=sys.stderr,
+                 on_progress=None) -> BackfillStats:
     stats = BackfillStats()
     tmin = parse_ts(time_from) or datetime.now(timezone.utc)
     tmax = parse_ts(time_to) or datetime.now(timezone.utc)
@@ -244,12 +290,12 @@ def run_backfill(es_url: str, es_token: str, es_auth: str, index: str,
             if limit and stats.prepared >= limit:
                 return
 
-    sample_shown = False
     for batch in make_batches(shaped()):
         stats.batches += 1
-        if not sample_shown:
-            print("sample record:", json.dumps(batch[0], indent=2)[:800], file=out)
-            sample_shown = True
+        if stats.sample is None:
+            stats.sample = batch[0]
+            if out is not None:
+                print("sample record:", json.dumps(batch[0], indent=2)[:800], file=out)
         if apply:
             err = ingest_batch(env_url, dt_token, batch, classic=classic)
             if err:
@@ -261,6 +307,10 @@ def run_backfill(es_url: str, es_token: str, es_auth: str, index: str,
                 stats.sent += len(batch)
         else:
             stats.sent += len(batch)  # would-send count in dry runs
+        if on_progress is not None:
+            on_progress(stats)
+    if on_progress is not None:
+        on_progress(stats)
     return stats
 
 
@@ -269,10 +319,6 @@ def backfill_cli(args) -> int:
     es_token = os.environ.get(args.es_token_env, "")
     dt_token = os.environ.get(args.token_env, "")
     env_url = args.env_url or os.environ.get("DYNATRACE_ENV_URL", "")
-    if args.apply and (not env_url or not dt_token):
-        print(f"error: --apply needs --env-url (or DYNATRACE_ENV_URL) and a token in "
-              f"{args.token_env}", file=sys.stderr)
-        return 2
     try:
         import requests  # noqa: F401
     except ImportError:
@@ -280,25 +326,58 @@ def backfill_cli(args) -> int:
               file=sys.stderr)
         return 2
 
-    stats = run_backfill(
-        es_url=args.es_url, es_token=es_token, es_auth=args.es_auth,
-        index=args.index, time_from=args.time_from, time_to=args.time_to,
-        query=args.query, env_url=env_url, dt_token=dt_token,
-        stamp=args.stamp, apply=args.apply, page_size=args.page_size,
-        limit=args.limit, timestamp_field=args.timestamp_field,
-        classic=args.classic, verify_tls=not args.insecure)
+    if getattr(args, "discover", False):
+        rows = discover_indices(args.es_url, es_token, args.es_auth,
+                                args.index or "*", args.timestamp_field,
+                                verify_tls=not args.insecure)
+        if not rows:
+            print("No matching indices.", file=sys.stderr)
+            return 1
+        w = max(len(r["index"]) for r in rows)
+        print(f"{'INDEX':{w}}  {'DOCS':>12}  {'SIZE':>8}  OLDEST .. NEWEST")
+        for r in rows:
+            print(f"{r['index']:{w}}  {r['docs']:>12,}  {r['size']:>8}  "
+                  f"{r['oldest'] or '?'} .. {r['newest'] or '?'}")
+        return 0
 
-    mode = "sent" if args.apply else "would send (dry run; pass --apply)"
-    print(f"\nscanned {stats.scanned}, prepared {stats.prepared}, "
-          f"skipped {stats.skipped} (no usable timestamp), "
-          f"{mode} {stats.sent} record(s) in {stats.batches} batch(es)",
-          file=sys.stderr)
-    for e in stats.errors:
-        print(f"  error: {e}", file=sys.stderr)
-    if stats.prepared:
-        print("\nquery backfilled data by ORIGINAL time, e.g.:\n"
-              "  fetch logs\n"
-              "  | filter backfilled == \"true\"\n"
-              f"  | filter original_timestamp >= \"{args.time_from}\" "
-              f"and original_timestamp <= \"{args.time_to}\"", file=sys.stderr)
-    return 1 if stats.errors else 0
+    if not args.index:
+        print("error: --index is required (or use --discover to list indices)",
+              file=sys.stderr)
+        return 2
+    if not args.time_from or not args.time_to:
+        print("error: --from and --to are required (use --discover to see each "
+              "index's time range)", file=sys.stderr)
+        return 2
+    if args.apply and (not env_url or not dt_token):
+        print(f"error: --apply needs --env-url (or DYNATRACE_ENV_URL) and a token in "
+              f"{args.token_env}", file=sys.stderr)
+        return 2
+
+    indices = [i.strip() for i in args.index.split(",") if i.strip()]
+    failed = False
+    for index in indices:
+        if len(indices) > 1:
+            print(f"\n== {index} ==", file=sys.stderr)
+        stats = run_backfill(
+            es_url=args.es_url, es_token=es_token, es_auth=args.es_auth,
+            index=index, time_from=args.time_from, time_to=args.time_to,
+            query=args.query, env_url=env_url, dt_token=dt_token,
+            stamp=args.stamp, apply=args.apply, page_size=args.page_size,
+            limit=args.limit, timestamp_field=args.timestamp_field,
+            classic=args.classic, verify_tls=not args.insecure)
+
+        mode = "sent" if args.apply else "would send (dry run; pass --apply)"
+        print(f"\nscanned {stats.scanned}, prepared {stats.prepared}, "
+              f"skipped {stats.skipped} (no usable timestamp), "
+              f"{mode} {stats.sent} record(s) in {stats.batches} batch(es)",
+              file=sys.stderr)
+        for e in stats.errors:
+            print(f"  error: {e}", file=sys.stderr)
+        failed = failed or bool(stats.errors)
+
+    print("\nquery backfilled data by ORIGINAL time, e.g.:\n"
+          "  fetch logs\n"
+          "  | filter backfilled == \"true\"\n"
+          f"  | filter original_timestamp >= \"{args.time_from}\" "
+          f"and original_timestamp <= \"{args.time_to}\"", file=sys.stderr)
+    return 1 if failed else 0

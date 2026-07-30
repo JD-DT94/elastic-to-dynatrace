@@ -428,10 +428,13 @@ def build_parser() -> argparse.ArgumentParser:
              "24h ingest wall: records are re-stamped into the accepted window and "
              "the true event time is kept in an original_timestamp attribute.")
     bf.add_argument("--es-url", required=True, help="Elasticsearch URL (https://es:9200)")
-    bf.add_argument("--index", required=True, help="Index or pattern to read (e.g. logs-app-*)")
-    bf.add_argument("--from", dest="time_from", required=True,
+    bf.add_argument("--index", help="Index/pattern to read, or a comma-separated list "
+                                    "(e.g. logs-app-*,logs-nginx-*)")
+    bf.add_argument("--discover", action="store_true",
+                    help="List matching indices with doc counts and time ranges, then exit")
+    bf.add_argument("--from", dest="time_from", default="",
                     help="Start of the original time window (ISO 8601)")
-    bf.add_argument("--to", dest="time_to", required=True,
+    bf.add_argument("--to", dest="time_to", default="",
                     help="End of the original time window (ISO 8601)")
     bf.add_argument("--query", help="Optional Lucene query_string to narrow the pull")
     bf.add_argument("--timestamp-field", default="@timestamp",

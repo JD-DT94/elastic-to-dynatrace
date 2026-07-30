@@ -234,6 +234,77 @@ def test_parity_compare_verdicts():
 
 
 # --------------------------------------------------------------------------- #
+# backfill automation (driver + GUI job runner)
+# --------------------------------------------------------------------------- #
+
+def test_run_backfill_reports_progress_and_sample(monkeypatch):
+    import e2d.backfill as bf
+
+    hits = [{"_index": "logs-a", "_source": {"@timestamp": f"2026-01-0{i}T00:00:00Z",
+                                             "message": f"m{i}"}} for i in range(1, 6)]
+    monkeypatch.setattr(bf, "es_scan", lambda *a, **k: iter(hits))
+    sent_batches = []
+    monkeypatch.setattr(bf, "ingest_batch",
+                        lambda env, tok, batch, classic=False, timeout=0:
+                        sent_batches.append(len(batch)) or None)
+    seen = []
+    stats = bf.run_backfill(
+        es_url="https://es:9200", es_token="", es_auth="ApiKey", index="logs-a",
+        time_from="2026-01-01T00:00:00Z", time_to="2026-01-05T00:00:00Z",
+        query=None, env_url="https://env", dt_token="tok", stamp="spread",
+        apply=True, out=None, on_progress=lambda st: seen.append(st.sent))
+    assert stats.scanned == 5 and stats.sent == 5 and not stats.errors
+    assert stats.sample and stats.sample["content"] == "m1"
+    assert seen and seen[-1] == 5
+    assert sum(sent_batches) == 5
+
+
+def test_sessions_backfill_job_runs_in_background(monkeypatch):
+    import time
+    import e2d.backfill as bf
+    from e2d.backfill import BackfillStats
+    from e2d.web.server import Sessions
+
+    def fake_run(**kw):
+        st = BackfillStats(scanned=7, prepared=7, sent=7, batches=1,
+                           sample={"content": "x"})
+        if kw.get("on_progress"):
+            kw["on_progress"](st)
+        return st
+    monkeypatch.setattr(bf, "run_backfill", fake_run)
+
+    s = Sessions()
+    try:
+        sid = s.new()
+        out = s.backfill_start(sid, {"es_url": "https://es:9200", "selection": [
+            {"index": "logs-a", "from": "2026-01-01", "to": "2026-02-01"}]})
+        assert out["started"] == 1 and out["apply"] is False
+        deadline = time.time() + 5
+        job = s.backfill_status(sid)
+        while job["state"] != "done" and time.time() < deadline:
+            time.sleep(0.05)
+            job = s.backfill_status(sid)
+        assert job["state"] == "done"
+        row = job["rows"][0]
+        assert row["state"] == "done" and row["sent"] == 7
+        assert row["sample"] == {"content": "x"}
+    finally:
+        s.close()
+
+
+def test_backfill_status_without_job_is_a_404_keyerror():
+    import pytest
+    from e2d.web.server import Sessions
+    s = Sessions()
+    try:
+        sid = s.new()
+        with pytest.raises(KeyError):
+            s.backfill_status(sid)
+    finally:
+        s.close()
+
+
+# --------------------------------------------------------------------------- #
 # CLI wiring
 # --------------------------------------------------------------------------- #
 
@@ -245,3 +316,9 @@ def test_cli_parses_backfill_and_parity():
     assert a.time_from.startswith("2026-01-01") and a.stamp == "spread" and not a.apply
     a = p.parse_args(["parity", "out", "--es-url", "https://es:9200", "--index", "logs-*"])
     assert a.window == "2h" and a.tolerance == 0.02
+    a = p.parse_args(["backfill", "--es-url", "https://es:9200", "--discover"])
+    assert a.discover and a.index is None
+    a = p.parse_args(["backfill", "--es-url", "https://es:9200",
+                      "--index", "logs-a-*, logs-b-*",
+                      "--from", "2026-01-01", "--to", "2026-02-01"])
+    assert [i.strip() for i in a.index.split(",")] == ["logs-a-*", "logs-b-*"]
