@@ -592,6 +592,40 @@ PAGE = r"""<!DOCTYPE html>
     color:var(--ink); border-radius:8px; padding:6px 8px; width:200px;
     font:12px ui-monospace,Consolas,monospace; }
   #bf_list table, #bf_out table { font-size:12.5px; }
+  a.logo { color:inherit; text-decoration:none; }
+  .tabs { display:flex; gap:2px; flex-wrap:wrap; }
+  .tab { font:600 13px "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+         color:var(--mut); background:transparent; border:0; border-radius:8px;
+         padding:8px 13px; cursor:pointer; text-decoration:none; }
+  .tab:hover { color:var(--ink); background:rgba(255,255,255,.05); }
+  .tab.on { color:var(--ink); background:rgba(77,141,255,.16); }
+  .view { display:none; }
+  .view.on { display:block; }
+  .cat-h { font:600 11px ui-monospace,Consolas,monospace; letter-spacing:.14em;
+           text-transform:uppercase; color:var(--faint); margin:20px 0 2px; }
+  .steps { list-style:none; margin:0; padding:0; }
+  .steps li { position:relative; padding:0 0 22px 44px; }
+  .steps li::before { content:""; position:absolute; left:13px; top:30px; bottom:0;
+                      width:2px; background:var(--line); }
+  .steps li:last-child::before { display:none; }
+  .steps .dot { position:absolute; left:0; top:0; width:28px; height:28px;
+                border-radius:50%; border:1px solid var(--line2); display:grid;
+                place-items:center; background:var(--panel); color:var(--mut);
+                font:600 12px ui-monospace,Consolas,monospace; }
+  .steps li.done .dot { background:var(--ok); border-color:var(--ok); color:#06210f; }
+  .steps h3 { margin:2px 0 3px; font-size:14.5px; }
+  .steps h3 label { display:inline-flex; gap:10px; align-items:center; cursor:pointer; }
+  .steps li.done h3 { color:var(--mut); text-decoration:line-through;
+                      text-decoration-color:var(--faint); }
+  .steps p { margin:0; font-size:13px; color:var(--mut); }
+  .steps input[type="checkbox"] { width:15px; height:15px; accent-color:#27a56d; }
+  .map-h { margin:0 0 6px; font-size:14.5px; }
+  #map_idx input, #map_fld input, #map_idx select {
+    background:rgba(0,0,0,.35); border:1px solid var(--line2); color:var(--ink);
+    border-radius:8px; padding:7px 9px; width:100%;
+    font:12.5px ui-monospace,Consolas,monospace; }
+  #map_idx td, #map_fld td { border-bottom:0; padding:4px 6px 4px 0; }
+  #map_idx th, #map_fld th { padding-left:0; }
   .disc-item { display:flex; align-items:center; gap:8px; padding:3px 0; font-size:13px; }
   .disc-group { color:var(--faint); font-weight:600; margin:10px 0 2px; font-size:11px;
                 letter-spacing:.14em; text-transform:uppercase;
@@ -634,11 +668,20 @@ PAGE = r"""<!DOCTYPE html>
 <body>
 <header class="top">
   <div class="bar">
-    <span class="logo"><span class="mark">e2d</span> elastic-to-dynatrace</span>
+    <a class="logo" href="#convert" title="Home"><span class="mark">e2d</span> elastic-to-dynatrace</a>
+    <nav class="tabs">
+      <a class="tab" data-tab="convert" href="#convert">Convert</a>
+      <a class="tab" data-tab="live" href="#live">Live Elastic</a>
+      <a class="tab" data-tab="query" href="#query">Paste a query</a>
+      <a class="tab" data-tab="process" href="#process">Process</a>
+      <a class="tab" data-tab="mapping" href="#mapping">Mapping</a>
+      <a class="tab" data-tab="reference" href="#reference">Reference</a>
+    </nav>
     <span class="local">localhost only, nothing leaves this machine</span>
   </div>
 </header>
 <main class="wrap">
+  <section class="view" id="view-convert">
   <div class="hero">
     <h1>Elastic &#8594; Dynatrace</h1>
     <p class="tagline">Drop your exports, a <code>.zip</code> or individual
@@ -647,7 +690,30 @@ PAGE = r"""<!DOCTYPE html>
        <strong>Everything runs on this machine.</strong> Nothing is uploaded anywhere.</p>
   </div>
 
-  <details class="card" id="pull-card" style="margin-bottom:16px">
+  <div class="card" id="stage-input">
+    <div id="drop">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+      <strong>Drop files here</strong> or click to choose
+      <p class="note" style="margin:6px 0 0">Kibana dashboards &middot; ES|QL &middot; Query DSL
+         &middot; KQL/Lucene &middot; Logstash &middot; ingest pipelines</p>
+      <input type="file" id="picker" multiple class="hide">
+    </div>
+    <ul class="files" id="filelist"></ul>
+    <button id="go" disabled>Convert</button>
+    <div class="err-box hide" id="err"></div>
+  </div>
+
+  <div class="card hide" id="stage-result" style="margin-top:24px"></div>
+  </section>
+  <section class="view" id="view-live">
+  <h2 style="margin-top:26px">Live Elastic estate</h2>
+  <p class="note">Pull convertible objects and backfill history straight from the
+     cluster. Credentials stay in memory on this machine.</p>
+  <details class="card" id="pull-card" style="margin-bottom:16px" open>
     <summary class="h">Pull from a live Elastic estate (optional)</summary>
     <p class="note">Connect to Kibana/Elasticsearch and pull dashboards, rules, ingest pipelines
        and watchers via their APIs. Credentials are kept in memory and never written to disk.</p>
@@ -661,7 +727,7 @@ PAGE = r"""<!DOCTYPE html>
     <div id="discovery"></div>
   </details>
 
-  <details class="card" id="backfill-card" style="margin-bottom:16px">
+  <details class="card" id="backfill-card" style="margin-bottom:16px" open>
     <summary class="h">Backfill historical logs (past the 24h wall)</summary>
     <p class="note">Streams old logs straight from Elasticsearch into Dynatrace: each record
        is re-stamped into the accepted window and keeps its true event time in
@@ -688,23 +754,8 @@ PAGE = r"""<!DOCTYPE html>
     </div>
   </details>
 
-  <div class="card" id="stage-input">
-    <div id="drop">
-      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-           stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-        <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
-      </svg>
-      <strong>Drop files here</strong> or click to choose
-      <p class="note" style="margin:6px 0 0">Kibana dashboards &middot; ES|QL &middot; Query DSL
-         &middot; KQL/Lucene &middot; Logstash &middot; ingest pipelines</p>
-      <input type="file" id="picker" multiple class="hide">
-    </div>
-    <ul class="files" id="filelist"></ul>
-    <button id="go" disabled>Convert</button>
-    <div class="err-box hide" id="err"></div>
-  </div>
-
+  </section>
+  <section class="view" id="view-query">
   <div class="card" id="quick" style="margin-top:16px">
     <h2 style="margin:0 0 4px;font-size:17px">Paste a query</h2>
     <p class="note" style="margin:0 0 10px">Paste one ES|QL, Query DSL, KQL or Lucene query.
@@ -724,8 +775,69 @@ PAGE = r"""<!DOCTYPE html>
     <div id="qout"></div>
   </div>
 
-  <div class="card hide" id="stage-result" style="margin-top:24px"></div>
-
+  </section>
+  <section class="view" id="view-process">
+  <h2 style="margin-top:26px">Migration process</h2>
+  <p class="note">The end-to-end flow this toolkit supports, in working order.
+     Ticks are saved in this browser.</p>
+  <div class="card">
+    <p class="note" id="steps_done" style="margin:0 0 14px"></p>
+    <ol class="steps">
+      <li data-step="0"><span class="dot">1</span>
+        <h3><label><input type="checkbox" class="step-box"> Inventory and pull</label></h3>
+        <p>Collect your Kibana/Elastic exports, or connect on the Live Elastic tab and pull dashboards, rules, pipelines and watchers straight from the estate.</p></li>
+      <li data-step="1"><span class="dot">2</span>
+        <h3><label><input type="checkbox" class="step-box"> Convert everything</label></h3>
+        <p>Drop the lot on the Convert tab. Triage the results: OK ships as-is, REVIEW needs a look, MANUAL needs a person. MIGRATION_REPORT.md holds the detail.</p></li>
+      <li data-step="2"><span class="dot">3</span>
+        <h3><label><input type="checkbox" class="step-box"> Set mapping rules</label></h3>
+        <p>On the Mapping tab, route index patterns to data objects and rename fields, then re-convert until nothing falls back to defaults it shouldn't.</p></li>
+      <li data-step="3"><span class="dot">4</span>
+        <h3><label><input type="checkbox" class="step-box"> Storage and routing</label></h3>
+        <p>Create Grail buckets from CUTOVER-PLAN.md so retention matches your ILM obligations, and set OpenPipeline routing for each log source.</p></li>
+      <li data-step="4"><span class="dot">5</span>
+        <h3><label><input type="checkbox" class="step-box"> Deploy pipelines</label></h3>
+        <p>terraform apply each pipelines_tf/ module, or paste the .dpl stages into OpenPipeline. Fields must exist before anything downstream lights up.</p></li>
+      <li data-step="5"><span class="dot">6</span>
+        <h3><label><input type="checkbox" class="step-box"> Repoint shippers and dual-ship</label></h3>
+        <p>Apply the shippers/*.otel.yaml collector configs, or add the dual-ship output from CUTOVER-PLAN.md so both stacks receive logs during validation.</p></li>
+      <li data-step="6"><span class="dot">7</span>
+        <h3><label><input type="checkbox" class="step-box"> Verify fields and parity</label></h3>
+        <p>Check each dashboard's .fields.md manifest, run e2d verify --data for empty tiles, and e2d parity to compare counts between the stacks.</p></li>
+      <li data-step="7"><span class="dot">8</span>
+        <h3><label><input type="checkbox" class="step-box"> Import dashboards and SLOs</label></h3>
+        <p>Upload dashboard JSON (or push from the results panel), then create SLOs from the slos/ definitions.</p></li>
+      <li data-step="8"><span class="dot">9</span>
+        <h3><label><input type="checkbox" class="step-box"> Backfill history where needed</label></h3>
+        <p>For indexes whose history must live in Dynatrace, use the backfill panel on the Live Elastic tab. Query it by original_timestamp afterwards.</p></li>
+      <li data-step="9"><span class="dot">10</span>
+        <h3><label><input type="checkbox" class="step-box"> Alerts last, then cutover</label></h3>
+        <p>Enable anomaly detectors once data flows and thresholds are reviewed. Mark Elasticsearch read-only per the plan, and decommission when retention lapses.</p></li>
+    </ol>
+    <button id="steps_reset" class="copy" style="margin-top:4px">Reset checklist</button>
+  </div>
+  </section>
+  <section class="view" id="view-mapping">
+  <h2 style="margin-top:26px">Mapping rules</h2>
+  <p class="note">Route Elastic index patterns to Grail data objects and rename fields.
+     Rules are saved in this browser and applied to every conversion automatically;
+     a <code>mapping.config.json</code> dropped with your files takes precedence.
+     Custom index rules are tried before the built-in defaults.</p>
+  <div class="card">
+    <h3 class="map-h">Index patterns &#8594; data objects</h3>
+    <table id="map_idx"></table>
+    <button id="map_idx_add" class="copy" style="margin-top:8px">Add rule</button>
+    <h3 class="map-h" style="margin-top:22px">Field renames</h3>
+    <table id="map_fld"></table>
+    <button id="map_fld_add" class="copy" style="margin-top:8px">Add rename</button>
+    <div class="row">
+      <button id="map_dl">Download mapping.config.json</button>
+      <button id="map_copy" class="copy" style="padding:9px 16px;font-size:13px">Copy JSON</button>
+      <span class="note" id="map_note"></span>
+    </div>
+  </div>
+  </section>
+  <section class="view" id="view-reference">
   <h2>What it converts</h2>
   <div class="grid">
     <div class="feat">
@@ -852,6 +964,7 @@ PAGE = r"""<!DOCTYPE html>
           schedules the dual-ship overlap instead.</li>
     </ul>
   </div>
+  </section>
 </main>
 
 <script>
@@ -903,7 +1016,10 @@ go.addEventListener("click", async () => {
   try {
     const { session } = await post("/session");
     currentSession = session;
-    for (const f of chosen) {
+    const toSend = chosen.slice();
+    if (mapHasRules() && !toSend.some(f => f.name === "mapping.config.json"))
+      toSend.push(new File([mappingJson()], "mapping.config.json"));
+    for (const f of toSend) {
       await post("/upload", await f.arrayBuffer(),
                  { "X-Session": session, "X-Filename": f.name });
     }
@@ -1054,7 +1170,19 @@ function render(d) {
             <button data-collapse>Collapse all</button>
             <span class="note">Click a file to view & copy its converted output.</span>
           </div>`;
-    h += d.items.map((it, i) => itemCard(it, i)).join("");
+    const CATS = [["dashboard", "Dashboards"], ["query", "Queries"],
+      ["pipeline", "Pipelines"], ["alert", "Alerts & watchers"], ["slo", "SLOs"],
+      ["shipper", "Shippers"], ["synthetic", "Synthetic monitors"],
+      ["transform", "Transforms"], ["config", "Cluster config"]];
+    const known = new Set(CATS.map(c => c[0]));
+    for (const [cat, title] of CATS) {
+      const group = d.items.map((it, i) => [it, i]).filter(([it]) => it.category === cat);
+      if (!group.length) continue;
+      h += `<h3 class="cat-h">${title} (${group.length})</h3>`;
+      h += group.map(([it, i]) => itemCard(it, i)).join("");
+    }
+    h += d.items.map((it, i) => [it, i]).filter(([it]) => !known.has(it.category))
+          .map(([it, i]) => itemCard(it, i)).join("");
   }
   if (d.secrets.length) {
     h += `<h2>Possible secrets in your inputs</h2>
@@ -1355,6 +1483,121 @@ async function bfPoll() {
 
 $("#bf_dry").addEventListener("click", () => bfRun(false));
 $("#bf_go").addEventListener("click", () => bfRun(true));
+
+// ---- tab routing (logo = home) ------------------------------------------
+const VIEWS = ["convert", "live", "query", "process", "mapping", "reference"];
+function showView(name) {
+  if (!VIEWS.includes(name)) name = "convert";
+  for (const v of VIEWS) {
+    document.getElementById("view-" + v).classList.toggle("on", v === name);
+    document.querySelector(`[data-tab="${v}"]`).classList.toggle("on", v === name);
+  }
+}
+window.addEventListener("hashchange", () => showView(location.hash.slice(1)));
+showView(location.hash.slice(1));
+
+// ---- migration process checklist (saved in this browser) -----------------
+const STEPS_KEY = "e2d_steps";
+function stepsState() {
+  try { return JSON.parse(LS.getItem(STEPS_KEY)) || {}; } catch (e) { return {}; }
+}
+function paintSteps() {
+  const st = stepsState();
+  const items = document.querySelectorAll(".steps li");
+  let done = 0;
+  items.forEach(li => {
+    const on = !!st[li.dataset.step];
+    li.classList.toggle("done", on);
+    li.querySelector(".step-box").checked = on;
+    done += on;
+  });
+  $("#steps_done").textContent = `${done} of ${items.length} steps done`;
+}
+document.querySelectorAll(".step-box").forEach(b => b.addEventListener("change", e => {
+  const st = stepsState();
+  st[e.target.closest("li").dataset.step] = e.target.checked;
+  LS.setItem(STEPS_KEY, JSON.stringify(st));
+  paintSteps();
+}));
+$("#steps_reset").addEventListener("click", () => { LS.removeItem(STEPS_KEY); paintSteps(); });
+paintSteps();
+
+// ---- mapping rules builder ------------------------------------------------
+const MAP_KEY = "e2d_mapping";
+const DATA_OBJECTS = ["logs", "spans", "events", "user.events", "bizevents", "__metrics__"];
+function mapState() {
+  try {
+    const m = JSON.parse(LS.getItem(MAP_KEY)) || {};
+    return { index_map: m.index_map || [], field_map: m.field_map || [] };
+  } catch (e) { return { index_map: [], field_map: [] }; }
+}
+function saveMapState(m) { LS.setItem(MAP_KEY, JSON.stringify(m)); paintMap(); }
+function mappingJson() {
+  const m = mapState();
+  const fm = {};
+  for (const [a, b] of m.field_map) if (a && b) fm[a] = b;
+  return JSON.stringify({
+    index_map: m.index_map.filter(r => r.pattern && r.data_object),
+    field_map: fm,
+  }, null, 2) + "\n";
+}
+function mapHasRules() {
+  const m = mapState();
+  return m.index_map.some(r => r.pattern) || m.field_map.some(([a, b]) => a && b);
+}
+function paintMap() {
+  const m = mapState();
+  $("#map_idx").innerHTML =
+    `<tr><th>Pattern (regex)</th><th>Data object</th><th></th></tr>` +
+    m.index_map.map((r, i) => `<tr>
+      <td><input class="mi-pat" data-i="${i}" value="${esc(r.pattern || "")}" placeholder="^myapp-logs-"></td>
+      <td><select class="mi-obj" data-i="${i}">${DATA_OBJECTS.map(o =>
+        `<option value="${o}"${o === r.data_object ? " selected" : ""}>` +
+        `${o === "__metrics__" ? "metrics (timeseries)" : o}</option>`).join("")}</select></td>
+      <td><button class="copy mi-del" data-i="${i}">Remove</button></td></tr>`).join("");
+  $("#map_fld").innerHTML =
+    `<tr><th>Elastic field</th><th>DQL field</th><th></th></tr>` +
+    m.field_map.map((r, i) => `<tr>
+      <td><input class="mf-from" data-i="${i}" value="${esc(r[0] || "")}" placeholder="user.id"></td>
+      <td><input class="mf-to" data-i="${i}" value="${esc(r[1] || "")}" placeholder="user.id"></td>
+      <td><button class="copy mf-del" data-i="${i}">Remove</button></td></tr>`).join("");
+  $("#map_note").textContent = mapHasRules()
+    ? "Applied automatically to every conversion on this machine."
+    : "No custom rules yet; the built-in defaults apply.";
+}
+$("#map_idx_add").addEventListener("click", () => {
+  const m = mapState(); m.index_map.push({ pattern: "", data_object: "logs" }); saveMapState(m);
+});
+$("#map_fld_add").addEventListener("click", () => {
+  const m = mapState(); m.field_map.push(["", ""]); saveMapState(m);
+});
+document.getElementById("view-mapping").addEventListener("input", e => {
+  const i = +e.target.dataset.i; const m = mapState();
+  if (e.target.classList.contains("mi-pat")) m.index_map[i].pattern = e.target.value;
+  else if (e.target.classList.contains("mf-from")) m.field_map[i][0] = e.target.value;
+  else if (e.target.classList.contains("mf-to")) m.field_map[i][1] = e.target.value;
+  else return;
+  LS.setItem(MAP_KEY, JSON.stringify(m));
+  $("#map_note").textContent = "Applied automatically to every conversion on this machine.";
+});
+document.getElementById("view-mapping").addEventListener("change", e => {
+  if (!e.target.classList.contains("mi-obj")) return;
+  const m = mapState(); m.index_map[+e.target.dataset.i].data_object = e.target.value;
+  LS.setItem(MAP_KEY, JSON.stringify(m));
+});
+document.getElementById("view-mapping").addEventListener("click", e => {
+  const i = +e.target.dataset.i; const m = mapState();
+  if (e.target.classList.contains("mi-del")) { m.index_map.splice(i, 1); saveMapState(m); }
+  if (e.target.classList.contains("mf-del")) { m.field_map.splice(i, 1); saveMapState(m); }
+});
+$("#map_dl").addEventListener("click", () => {
+  const url = URL.createObjectURL(new Blob([mappingJson()], { type: "application/json" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = "mapping.config.json"; a.click();
+  URL.revokeObjectURL(url);
+});
+$("#map_copy").addEventListener("click", e => copyText(mappingJson(), e.target));
+paintMap();
 
 </script>
 </body>

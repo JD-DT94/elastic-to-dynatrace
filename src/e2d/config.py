@@ -118,7 +118,10 @@ class MappingConfig:
         with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
         if "index_map" in data:
-            cfg.index_map = [(r["pattern"], r["data_object"]) for r in data["index_map"]]
+            # custom rules are tried first; the built-in defaults stay as a
+            # fallback so one custom rule doesn't silently unmap everything else
+            cfg.index_map = [(r["pattern"], r["data_object"])
+                             for r in data["index_map"]] + cfg.index_map
         if "field_map" in data:
             cfg.field_map.update(data["field_map"])
         if "data_object_field_map" in data:
