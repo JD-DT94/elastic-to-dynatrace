@@ -45,6 +45,9 @@
        -webkit-background-clip:text; background-clip:text; color:transparent; }
   .tagline { margin:0 auto; max-width:56ch; color:var(--mut); font-size:16.5px; }
   .tagline strong { color:var(--ink); font-weight:600; }
+  .tagline a { color:#7cc4ff; text-decoration:none;
+               border-bottom:1px solid rgba(124,196,255,.4); }
+  .tagline a:hover { color:var(--ink); border-bottom-color:var(--ink); }
 
   .panel { background:linear-gradient(180deg,var(--panel2),var(--panel));
            border:1px solid var(--line); border-radius:16px; padding:22px;
@@ -211,9 +214,12 @@
 <main class="wrap">
   <div class="hero">
     <h1>Elastic &#8594; Dynatrace</h1>
-    <p class="tagline">Converts dashboards, queries, pipelines, alerts and transforms to
-       their Dynatrace equivalents, <strong>entirely in your browser</strong>. Nothing is
-       uploaded.</p>
+    <p class="tagline">A drag-and-drop converter: Elastic dashboards, queries, pipelines,
+       alerts, SLOs and more become their Dynatrace equivalents,
+       <strong>entirely in this browser tab</strong>. Nothing is uploaded.
+       To pull from Elastic and push to Dynatrace automatically, run it locally on
+       your machine from
+       <a href="https://github.com/JD-DT94/elastic-to-dynatrace">the GitHub repo</a>.</p>
   </div>
 
   <div class="panel">
