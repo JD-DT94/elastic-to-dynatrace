@@ -17,7 +17,7 @@ from e2d.config import MappingConfig
 from e2d.core.agg_tree import AggTree, Bucket, Metric, Pipeline, PostExpr, apply_to_query
 from e2d.core.dql_builder import Query, quote_field
 from e2d.core.filter_ir import (
-    And, Compare, Exists, In, Node, Not, Or, Regex, TimeRange, Wildcard,
+    And, Compare, Exists, In, Node, Not, Or, Phrase, Regex, TimeRange, Wildcard,
     TIME_FIELDS, emit_filter, split_timeframe, strip_keyword,
 )
 from e2d.core.lucene import translate_lucene
@@ -40,9 +40,24 @@ def parse_query(q: Optional[Dict[str, Any]], config, data_object, report) -> Opt
         return _parse_bool(body, config, data_object, report)
     if kind in ("term", "match", "match_phrase", "match_phrase_prefix"):
         field, val = _single(body)
+        value = _val(val)
         if kind != "term":
-            report.info(f"`{kind}` on `{field}` mapped to ==; analyzed-match semantics may differ.")
-        return Compare(field, "==", _val(val))
+            resolved = config.resolve_field(strip_keyword(field), data_object)
+            if resolved == "content":
+                # ES matches analyzed text (the value occurring IN the message);
+                # == would require the whole log line to equal the value
+                report.info(f"`{kind}` on the log body mapped to "
+                            "matchesPhrase(content, ...).")
+                if kind == "match" and isinstance(value, str) and " " in value:
+                    report.warn("`match` matches records containing ANY of the "
+                                "analyzed terms; matchesPhrase requires the words "
+                                "together. Split into OR'd matchesPhrase() calls "
+                                "if any-term behavior was intended.")
+                return Phrase(str(value), field=field)
+            report.info(f"`{kind}` on `{field}` mapped to ==; analyzed-match "
+                        "semantics may differ. If it is an analyzed text field, "
+                        "use matchesPhrase() instead.")
+        return Compare(field, "==", value)
     if kind == "terms":
         field, vals = _single(body)
         return In(field, [_val(v) for v in (vals or [])])
@@ -75,10 +90,23 @@ def _parse_bool(b: Dict[str, Any], config, data_object, report) -> Optional[Node
 
     parts: List[Node] = many("must") + many("filter")
     should = many("should")
+    msm = b.get("minimum_should_match")
     if should:
-        if len(should) > 1 and b.get("minimum_should_match"):
-            report.info(f"bool.should minimum_should_match={b.get('minimum_should_match')} approximated as OR.")
-        parts.append(Or(should) if len(should) > 1 else should[0])
+        if parts and not msm:
+            # With sibling must/filter clauses, minimum_should_match defaults to
+            # 0: should only affects scoring. AND-ing it in would silently narrow
+            # the result set, so it is left out of the filter.
+            report.warn("bool.should next to must/filter is optional in "
+                        "Elasticsearch (minimum_should_match defaults to 0), so "
+                        "the should clauses were left out of the filter. If they "
+                        "were meant to restrict results, set "
+                        "minimum_should_match: 1 in the source and re-convert.")
+        else:
+            if msm not in (None, 1, "1") and len(should) > 1:
+                report.warn(f"bool.should minimum_should_match={msm} approximated "
+                            "as any-of (OR); at-least-{msm}-of has no direct DQL "
+                            "equivalent.")
+            parts.append(Or(should) if len(should) > 1 else should[0])
     for mn in many("must_not"):
         parts.append(Not(mn))
     if not parts:
@@ -86,9 +114,18 @@ def _parse_bool(b: Dict[str, Any], config, data_object, report) -> Optional[Node
     return And(parts) if len(parts) > 1 else parts[0]
 
 
+_DATE_MATH = re.compile(r"^now([-+/]|$)")
+
+
 def _range(field: str, spec: Dict[str, Any]) -> Node:
     is_time = strip_keyword(field) in TIME_FIELDS
-    if is_time:
+    bounds = [spec.get(k) for k in ("gte", "gt", "lte", "lt")
+              if spec.get(k) is not None]
+    # a range using ES date math (now-1h) is temporal regardless of the field
+    # name; emitting the raw string would compare against a literal "now-1h"
+    has_math = any(isinstance(v, str) and _DATE_MATH.match(v.strip())
+                   for v in bounds)
+    if is_time or has_math:
         return TimeRange(field=field, gte=spec.get("gte"), gt=spec.get("gt"),
                          lte=spec.get("lte"), lt=spec.get("lt"))
     parts: List[Node] = []

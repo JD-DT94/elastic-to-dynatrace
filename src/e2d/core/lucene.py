@@ -12,13 +12,34 @@ is flagged INFO so a reviewer can confirm.
 
 from __future__ import annotations
 
+import re
 from typing import List, Optional, Tuple
 
 from e2d.config import MappingConfig
 from e2d.core.filter_ir import (
-    And, Compare, In, Node, Not, Or, Phrase, Regex, TimeRange, Wildcard, TIME_FIELDS, strip_keyword,
+    And, Compare, Exists, In, Node, Not, Or, Phrase, Regex, TimeRange, Wildcard,
+    TIME_FIELDS, strip_keyword,
 )
 from e2d.report import Report
+
+# trailing scoring modifiers: `term~2` (fuzzy), `"phrase"~3` (proximity),
+# `term^4` (boost). None of them filter; they only affect relevance scoring.
+_BOOST_RE = re.compile(r"^(.+)\^(\d+(?:\.\d+)?)$")
+_FUZZ_RE = re.compile(r"^(.+)~(\d*(?:\.\d+)?)$")
+
+
+def _strip_scoring(val: str, report: Report) -> str:
+    m = _BOOST_RE.match(val)
+    if m:
+        val = m.group(1)
+        report.info(f"Relevance boost `^{m.group(2)}` dropped (scoring-only; no "
+                    "filter semantics).")
+    m = _FUZZ_RE.match(val)
+    if m:
+        val = m.group(1)
+        report.warn(f"Fuzziness `~{m.group(2)}` dropped; DQL matches the exact "
+                    "value, so fewer records may match than in Elasticsearch.")
+    return val
 
 _OPS = {"and": "AND", "or": "OR", "not": "NOT", "&&": "AND", "||": "OR", "!": "NOT"}
 
@@ -161,14 +182,37 @@ class _LuceneParser:
             return self._field_clause()
         if kind in ("WORD", "STRING"):
             self._next()
-            return Phrase(text=val)
+            if kind == "STRING":
+                self._absorb_scoring_suffix()
+            return Phrase(text=_strip_scoring(val, self.report) if kind == "WORD" else val)
         # stray token
         self._next()
         return None
 
+    def _is_content(self, field: str) -> bool:
+        return self.config.resolve_field(strip_keyword(field),
+                                         self.data_object) == "content"
+
+    def _absorb_scoring_suffix(self) -> None:
+        """Consume a standalone `~N` / `^N` token following a quoted phrase."""
+        kind, val = self._peek()
+        if kind == "WORD" and val and val[0] in "~^":
+            self._next()
+            if val[0] == "~":
+                self.report.warn(f"Phrase proximity `{val}` dropped; DQL matches "
+                                 "the exact phrase, so fewer records may match.")
+            else:
+                self.report.info(f"Relevance boost `{val}` dropped (scoring-only).")
+
     def _field_clause(self) -> Optional[Node]:
         field = self._next()[1]
         self._next()  # colon
+        if field == "_exists_":
+            # `_exists_:name` is Lucene's field-existence check, not an equality
+            kind, val = self._peek()
+            if kind in ("WORD", "STRING"):
+                self._next()
+                return Exists(field=val)
         kind, val = self._peek()
         if kind == "LP":  # field:(A OR B ...)
             self._next()
@@ -184,6 +228,9 @@ class _LuceneParser:
             return Regex(field=field, pattern=val)
         if kind == "STRING":
             self._next()
+            self._absorb_scoring_suffix()
+            if self._is_content(field):
+                return Phrase(text=val, field=field)
             return Compare(field, "==", val)
         if kind == "WORD":
             self._next()
@@ -195,8 +242,16 @@ class _LuceneParser:
         for op in (">=", "<=", ">", "<"):
             if val.startswith(op):
                 return Compare(field, op, _coerce(val[len(op):]))
+        val = _strip_scoring(val, self.report)
+        if val == "*":
+            # `field:*` means "the field exists", not a wildcard match
+            return Exists(field=field)
         if "*" in val or "?" in val:
             return Wildcard(field=field, pattern=val)
+        if self._is_content(field):
+            # ES matches the analyzed value IN the message; == would require the
+            # whole log line to equal it
+            return Phrase(text=val, field=field)
         return Compare(field, "==", _coerce(val))
 
     def _value_list(self):

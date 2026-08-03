@@ -278,6 +278,13 @@ def _match(field: str, value: str, was_quoted: bool, report: Report) -> str:
         # KQL wildcards -> DQL matchesValue (supports leading/trailing *)
         report.info(f"KQL wildcard `{value}` mapped to matchesValue().")
         return f'matchesValue({fq}, "{_esc(value)}")'
+    if field == "content":
+        # ES matches analyzed text (the value occurring IN the message); DQL ==
+        # would require the whole log line to equal the value, which is silently
+        # wrong for the log body.
+        report.info("Match on the log body mapped to matchesPhrase(content, ...); "
+                    "`==` would require the entire log line to equal the value.")
+        return f'matchesPhrase({fq}, "{_esc(value)}")'
     # A quoted KQL value is always a string, even if it looks numeric ("1").
     rhs = f'"{_esc(value)}"' if was_quoted else _lit(value)
     return f"{fq} == {rhs}"
