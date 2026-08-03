@@ -290,6 +290,40 @@ def cmd_parity(args: argparse.Namespace) -> int:
     return parity_cli(args)
 
 
+def cmd_assess(args: argparse.Namespace) -> int:
+    """Assessment-only: convert into a scratch directory, print the scorecard,
+    keep nothing. Exit 0 = clean, 2 = manual work present, 1 = converter errors."""
+    import json
+    import tempfile
+    from e2d.migrate import run_migration
+    from e2d.score import report_payload, scorecard_line
+    config = _load_config(args.config)
+    if not Path(args.input).is_dir():
+        print(f"error: {args.input} is not a directory", file=sys.stderr)
+        return 2
+    with tempfile.TemporaryDirectory() as td:
+        summary = run_migration(args.input, td, config)
+        payload = report_payload(summary)
+    sc = payload["scorecard"]
+    print(scorecard_line(sc))
+    if sc["by_category"]:
+        w = max(len(c) for c in sc["by_category"])
+        print(f"\n{'CATEGORY':{w}}  TOTAL  EXACT  APPROX  MANUAL")
+        for cat in sorted(sc["by_category"]):
+            r = sc["by_category"][cat]
+            print(f"{cat:{w}}  {r['total']:5}  {r['exact']:5}  "
+                  f"{r['approximate']:6}  {r['manual']:6}")
+    for s in payload["skipped"]:
+        print(f"skipped: {s}", file=sys.stderr)
+    if args.json:
+        Path(args.json).write_text(json.dumps(payload, indent=2) + "\n",
+                                   encoding="utf-8")
+        print(f"\nJSON report -> {args.json}", file=sys.stderr)
+    if sc["counts"]["failed"]:
+        return 1
+    return 2 if sc["counts"]["manual"] else 0
+
+
 def cmd_web(args: argparse.Namespace) -> int:
     from e2d.web import serve
     config = _load_config(args.config)
@@ -401,6 +435,16 @@ def build_parser() -> argparse.ArgumentParser:
                         "(a tile with a missing custom attribute renders blank, not broken)")
     v.set_defaults(func=cmd_verify)
 
+    ax = sub.add_parser(
+        "assess",
+        help="Assessment-only: convert to a scratch dir, print the scorecard and "
+             "per-category table, keep nothing. Exit 0 = clean, 2 = manual work "
+             "present, 1 = converter errors; suits CI gates.")
+    ax.add_argument("input", help="Folder containing Elastic exports")
+    ax.add_argument("--json", help="Write the machine-readable report to this file")
+    ax.add_argument("--config", help="Mapping config JSON")
+    ax.set_defaults(func=cmd_assess)
+
     pr = sub.add_parser(
         "parity",
         help="Compare counts between the original Elastic queries and the converted "
@@ -451,6 +495,13 @@ def build_parser() -> argparse.ArgumentParser:
                          "(default); now: stamp everything with ingest time")
     bf.add_argument("--page-size", type=int, default=1000, help="ES page size (default: 1000)")
     bf.add_argument("--limit", type=int, default=0, help="Stop after N records (0 = all)")
+    bf.add_argument("--state", help="Checkpoint file (default: one per index in the "
+                                    "working directory); interrupted --apply runs resume "
+                                    "from it instead of duplicating")
+    bf.add_argument("--no-state", action="store_true", help="Disable checkpointing")
+    bf.add_argument("--dlq", help="Dead-letter file for permanently rejected batches "
+                                  "(default: next to the state file)")
+    bf.add_argument("--redrive", help="Re-send records from a dead-letter file, then exit")
     bf.add_argument("--classic", action="store_true",
                     help="Use the classic /api/v2/logs/ingest endpoint with an Api-Token "
                          "(scope logs.ingest) instead of the platform endpoint")

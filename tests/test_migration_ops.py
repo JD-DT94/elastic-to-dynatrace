@@ -245,8 +245,8 @@ def test_run_backfill_reports_progress_and_sample(monkeypatch):
     monkeypatch.setattr(bf, "es_scan", lambda *a, **k: iter(hits))
     sent_batches = []
     monkeypatch.setattr(bf, "ingest_batch",
-                        lambda env, tok, batch, classic=False, timeout=0:
-                        sent_batches.append(len(batch)) or None)
+                        lambda env, tok, batch, **kw:
+                        (sent_batches.append(len(batch)), (None, False))[1])
     seen = []
     stats = bf.run_backfill(
         es_url="https://es:9200", es_token="", es_auth="ApiKey", index="logs-a",
@@ -302,6 +302,173 @@ def test_backfill_status_without_job_is_a_404_keyerror():
             s.backfill_status(sid)
     finally:
         s.close()
+
+
+# --------------------------------------------------------------------------- #
+# retry envelope, checkpoints, dead-letter queue
+# --------------------------------------------------------------------------- #
+
+def test_with_retry_backs_off_and_honors_retry_after():
+    from e2d.net import with_retry, RetryPolicy
+    attempts = iter([(False, True, "HTTP 503", None),
+                     (False, True, "HTTP 429", 2.0),
+                     (True, False, "", None)])
+    delays = []
+    ok, detail, retries = with_retry(lambda: next(attempts),
+                                     RetryPolicy(),
+                                     sleep=delays.append,
+                                     clock=lambda: 0.0)
+    assert ok and retries == 2
+    assert delays == [5.0, 2.0]   # initial backoff, then the server's Retry-After
+
+
+def test_with_retry_fails_fast_on_permanent_4xx_and_gives_up_on_elapsed():
+    from e2d.net import with_retry, RetryPolicy
+    calls = []
+    ok, detail, retries = with_retry(
+        lambda: (calls.append(1), (False, False, "HTTP 400: bad", None))[1],
+        sleep=lambda s: (_ for _ in ()).throw(AssertionError("must not sleep")))
+    assert not ok and retries == 0 and len(calls) == 1 and "400" in detail
+
+    clock = iter([0.0, 500.0])   # second check is past max_elapsed
+    ok, detail, _ = with_retry(lambda: (False, True, "HTTP 503", None),
+                               RetryPolicy(max_elapsed=300),
+                               sleep=lambda s: None,
+                               clock=lambda: next(clock))
+    assert not ok and "gave up" in detail
+
+
+def _hits(n):
+    return [{"_index": "logs-a", "_id": f"d{i}", "sort": [i],
+             "_source": {"@timestamp": f"2026-01-0{i}T00:00:00Z",
+                         "message": f"m{i}"}} for i in range(1, n + 1)]
+
+
+def test_backfill_checkpoints_and_skips_completed_windows(tmp_path, monkeypatch):
+    import e2d.backfill as bf
+    state = tmp_path / "s.state.json"
+    monkeypatch.setattr(bf, "es_scan", lambda *a, **k: iter(_hits(3)))
+    monkeypatch.setattr(bf, "ingest_batch", lambda *a, **k: (None, False))
+    kw = dict(es_url="https://es", es_token="", es_auth="ApiKey", index="logs-a",
+              time_from="2026-01-01", time_to="2026-02-01", query=None,
+              env_url="https://env", dt_token="t", stamp="now", apply=True,
+              out=None, state_path=str(state))
+    stats = bf.run_backfill(**kw)
+    assert stats.sent == 3
+    st = json.loads(state.read_text(encoding="utf-8"))
+    assert st["done"] is True and st["sent"] == 3
+    # a second run must not re-send anything
+    monkeypatch.setattr(bf, "es_scan",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("re-scanned")))
+    again = bf.run_backfill(**kw)
+    assert again.sent == 0 and "complete" in again.note
+
+
+def test_backfill_resumes_from_cursor(tmp_path, monkeypatch):
+    import e2d.backfill as bf
+    state = tmp_path / "s.state.json"
+    state.write_text(json.dumps({"index": "logs-a", "from": "2026-01-01",
+                                 "to": "2026-02-01", "cursor": [7], "sent": 5,
+                                 "scanned": 5, "done": False}), encoding="utf-8")
+    seen = {}
+    def scan(*a, **k):
+        seen["search_after"] = k.get("search_after")
+        return iter(_hits(2))
+    monkeypatch.setattr(bf, "es_scan", scan)
+    monkeypatch.setattr(bf, "ingest_batch", lambda *a, **k: (None, False))
+    stats = bf.run_backfill(es_url="https://es", es_token="", es_auth="ApiKey",
+                            index="logs-a", time_from="2026-01-01",
+                            time_to="2026-02-01", query=None, env_url="https://env",
+                            dt_token="t", stamp="now", apply=True, out=None,
+                            state_path=str(state))
+    assert seen["search_after"] == [7] and stats.resumed
+    st = json.loads(state.read_text(encoding="utf-8"))
+    assert st["done"] is True and st["sent"] == 7   # 5 prior + 2 new
+
+
+def test_backfill_dead_letters_permanent_rejects_and_redrive_clears(tmp_path, monkeypatch):
+    import e2d.backfill as bf
+    dlq = tmp_path / "d.dlq.ndjson"
+    monkeypatch.setattr(bf, "es_scan", lambda *a, **k: iter(_hits(2)))
+    monkeypatch.setattr(bf, "ingest_batch",
+                        lambda *a, **k: ("HTTP 400: bad payload", True))
+    stats = bf.run_backfill(es_url="https://es", es_token="", es_auth="ApiKey",
+                            index="logs-a", time_from="2026-01-01",
+                            time_to="2026-02-01", query=None, env_url="https://env",
+                            dt_token="t", stamp="now", apply=True, out=None,
+                            dlq_path=str(dlq))
+    assert stats.dlq == 2 and stats.sent == 0
+    assert any("dead-lettered" in e for e in stats.errors)
+    lines = [json.loads(l) for l in dlq.read_text(encoding="utf-8").splitlines()]
+    assert len(lines) == 2 and lines[0]["content"] == "m1"
+    assert "__sort" not in lines[0] and lines[0]["dedup.key"]
+
+    monkeypatch.setattr(bf, "ingest_batch", lambda *a, **k: (None, False))
+    rd = bf.run_redrive(str(dlq), "https://env", "t", apply=True)
+    assert rd.sent == 2 and not dlq.exists()
+
+
+def test_backfill_aborts_and_keeps_checkpoint_when_target_is_down(tmp_path, monkeypatch):
+    import e2d.backfill as bf
+    state = tmp_path / "s.state.json"
+    monkeypatch.setattr(bf, "es_scan", lambda *a, **k: iter(_hits(2)))
+    monkeypatch.setattr(bf, "ingest_batch",
+                        lambda *a, **k: ("gave up after 300s: HTTP 503", False))
+    stats = bf.run_backfill(es_url="https://es", es_token="", es_auth="ApiKey",
+                            index="logs-a", time_from="2026-01-01",
+                            time_to="2026-02-01", query=None, env_url="https://env",
+                            dt_token="t", stamp="now", apply=True, out=None,
+                            state_path=str(state))
+    assert stats.errors and stats.sent == 0
+    # never marked done, so the next run resumes instead of skipping
+    if state.exists():
+        assert json.loads(state.read_text(encoding="utf-8"))["done"] is False
+
+
+# --------------------------------------------------------------------------- #
+# scorecard + assess
+# --------------------------------------------------------------------------- #
+
+def test_scorecard_folds_statuses_into_outcomes():
+    from e2d.migrate import Item, MigrationSummary
+    from e2d.score import build_scorecard, scorecard_line
+    s = MigrationSummary(items=[
+        Item("dashboard", "a", "OK"), Item("query", "b", "OK"),
+        Item("pipeline", "c", "REVIEW"), Item("alert", "d", "MANUAL")])
+    sc = build_scorecard(s)
+    assert sc["pct"]["exact"] == 50 and sc["counts"]["manual"] == 1
+    assert sc["est_review_hours"] == 2.0   # 1x1.5 manual + 1x0.25 review, rounded
+    line = scorecard_line(sc)
+    assert "50% exact" in line and "Rough review estimate" in line
+
+
+def test_migration_writes_json_report_with_outcomes(tmp_path):
+    (tmp_path / "in").mkdir()
+    (tmp_path / "in" / "q.esql").write_text("FROM logs-* | LIMIT 5", encoding="utf-8")
+    run_migration(str(tmp_path / "in"), str(tmp_path / "out"))
+    payload = json.loads((tmp_path / "out" / "migration_report.json")
+                         .read_text(encoding="utf-8"))
+    assert payload["tool"] == "e2d"
+    assert payload["items"][0]["outcome"] in ("exact", "approximate")
+    assert "scorecard" in payload and "plan" in payload
+    report = (tmp_path / "out" / "MIGRATION_REPORT.md").read_text(encoding="utf-8")
+    assert "## Scorecard" in report
+
+
+def test_assess_exit_codes(tmp_path):
+    from e2d.cli import main
+    clean = tmp_path / "clean"; clean.mkdir()
+    (clean / "q.esql").write_text("FROM logs-* | LIMIT 5", encoding="utf-8")
+    assert main(["assess", str(clean)]) == 0
+
+    manual = tmp_path / "manual"; manual.mkdir()
+    (manual / "slo.json").write_text(json.dumps({
+        "name": "latency", "objective": {"target": 0.99},
+        "indicator": {"type": "sli.apm.transactionDuration", "params": {}}}),
+        encoding="utf-8")
+    out_json = tmp_path / "report.json"
+    assert main(["assess", str(manual), "--json", str(out_json)]) == 2
+    assert json.loads(out_json.read_text(encoding="utf-8"))["scorecard"]["counts"]["manual"] == 1
 
 
 # --------------------------------------------------------------------------- #

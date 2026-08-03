@@ -38,6 +38,8 @@ index patterns need rules.
 
 ```bash
 pip install -e .            # Python >= 3.9, stdlib only
+e2d assess <export-dir>                     # scorecard only, converts nothing
+                                            # exit 0 clean / 2 manual work / 1 errors
 e2d migrate <export-dir> -o out/            # convert everything, one report
 e2d dashboard export.ndjson -o out/         # dashboards only
 e2d verify out/ --env-url https://<env>.apps.dynatrace.com          # DQL check
@@ -58,6 +60,15 @@ time ranges, pass a comma-separated `--index` list to move several in one run,
 or do the whole thing point-and-click in the local GUI (`e2d web`): the
 "Backfill historical logs" panel discovers indices, dry-runs with a sample
 record, ships with live progress, and verifies the landed counts in Grail.
+
+Backfill is resilient by default: every send retries with exponential backoff
+(429/5xx honor Retry-After; the defaults mirror the OpenTelemetry Collector's),
+progress is checkpointed per index so an interrupted run resumes instead of
+duplicating, permanently rejected batches land in a dead-letter file you can
+re-send with `--redrive`, and each record carries a deterministic `dedup.key`
+so any duplicates stay detectable in DQL. Every run also writes
+`migration_report.json` (scorecard, per-item outcomes, plan) for CI and
+tooling.
 
 Use a `mapping.config.json` to route index patterns to data objects and
 rename fields — see `samples/mapping.config.json`. Drop it in with your

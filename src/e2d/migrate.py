@@ -589,6 +589,9 @@ def run_migration(in_dir: str, out_dir: str, config: Optional[MappingConfig] = N
             encoding="utf-8")
 
     (out / "MIGRATION_REPORT.md").write_text(render_report(summary), encoding="utf-8")
+    from e2d.score import report_payload
+    (out / "migration_report.json").write_text(
+        json.dumps(report_payload(summary), indent=2) + "\n", encoding="utf-8")
     return summary
 
 
@@ -619,6 +622,8 @@ def render_report(summary: MigrationSummary) -> str:
     L.append("")
     L.append("Everything ran **on this machine, offline**; none of your data left it.")
     L.append("")
+    from e2d.score import build_scorecard, render_scorecard_md
+    L.extend(render_scorecard_md(build_scorecard(summary)))
     L.append("| Status | Meaning |")
     L.append("|--------|---------|")
     L.append("| OK | Converted cleanly, ready to use. |")

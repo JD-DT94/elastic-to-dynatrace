@@ -28,11 +28,17 @@ log-ingest API in batches that stay well inside the documented limits
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import sys
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
+
+from e2d.net import RetryPolicy, classify_response, with_retry
 
 # documented ingest limits, applied with headroom
 MAX_BATCH_RECORDS = 5_000          # limit is 50,000
@@ -58,6 +64,9 @@ class BackfillStats:
     skipped: int = 0                       # records without a usable timestamp
     errors: List[str] = field(default_factory=list)
     sample: Optional[Dict[str, Any]] = None  # first shaped record, for inspection
+    dlq: int = 0                             # records written to the dead-letter file
+    resumed: bool = False                    # this run continued from a checkpoint
+    note: str = ""                           # human context (resume/skip messages)
 
 
 # --------------------------------------------------------------------------- #
@@ -138,6 +147,11 @@ def to_log_record(hit: Dict[str, Any], now: datetime, mode: str,
     record["backfilled"] = "true"
     if hit.get("_index"):
         record["source.index"] = str(hit["_index"])
+    if hit.get("_id"):
+        # deterministic key: duplicates from an interrupted run stay detectable
+        # in DQL (summarize by dedup.key) even though ingest has no upsert
+        record["dedup.key"] = hashlib.sha1(
+            f"{hit.get('_index', '')}/{hit['_id']}".encode()).hexdigest()[:16]
     return record
 
 
@@ -165,8 +179,12 @@ def make_batches(records: Iterator[Dict[str, Any]],
 def es_scan(es_url: str, token: str, auth_scheme: str, index: str,
             time_from: str, time_to: str, query_string: Optional[str],
             page_size: int, timestamp_field: str,
-            verify_tls: bool = True) -> Iterator[Dict[str, Any]]:
-    """Yield hits oldest-first via search_after pagination."""
+            verify_tls: bool = True, search_after: Optional[list] = None,
+            policy: Optional[RetryPolicy] = None,
+            sleep=time.sleep) -> Iterator[Dict[str, Any]]:
+    """Yield hits oldest-first via search_after pagination. Each page fetch
+    runs under the retry envelope; a page that still fails after the envelope
+    raises RuntimeError (the caller keeps its checkpoint and can resume)."""
     import requests
     headers = {"Content-Type": "application/json"}
     if token:
@@ -180,12 +198,28 @@ def es_scan(es_url: str, token: str, auth_scheme: str, index: str,
         "sort": [{timestamp_field: "asc"}, {"_doc": "asc"}],
         "query": {"bool": {"filter": filters}},
     }
+    if search_after:
+        body["search_after"] = search_after
     url = f"{es_url.rstrip('/')}/{index}/_search"
     while True:
-        r = requests.post(url, headers=headers, json=body, timeout=120,
-                          verify=verify_tls)
-        r.raise_for_status()
-        hits = (r.json().get("hits") or {}).get("hits") or []
+        got: Dict[str, Any] = {}
+
+        def attempt():
+            try:
+                r = requests.post(url, headers=headers, json=body, timeout=120,
+                                  verify=verify_tls)
+            except Exception as e:
+                return False, True, f"request failed: {e}", None
+            ok, retryable, detail, ra = classify_response(
+                r.status_code, r.text, r.headers)
+            if ok:
+                got["json"] = r.json()
+            return ok, retryable, detail, ra
+
+        ok, detail, _ = with_retry(attempt, policy, sleep=sleep)
+        if not ok:
+            raise RuntimeError(f"Elasticsearch read failed: {detail}")
+        hits = (got["json"].get("hits") or {}).get("hits") or []
         if not hits:
             return
         yield from hits
@@ -193,8 +227,14 @@ def es_scan(es_url: str, token: str, auth_scheme: str, index: str,
 
 
 def ingest_batch(env_url: str, token: str, batch: List[Dict[str, Any]],
-                 classic: bool = False, timeout: int = 120) -> Optional[str]:
-    """POST one batch; return an error string or None on success."""
+                 classic: bool = False, timeout: int = 120,
+                 policy: Optional[RetryPolicy] = None,
+                 sleep=time.sleep) -> Tuple[Optional[str], bool]:
+    """POST one batch under the retry envelope.
+
+    Returns (error, permanent). (None, False) on success. permanent=True means
+    the server rejected the payload itself (a non-retryable 4xx): the batch
+    belongs in the dead-letter file, not in another retry."""
     import requests
     if classic:
         url = env_url.rstrip("/") + CLASSIC_INGEST_PATH
@@ -203,14 +243,46 @@ def ingest_batch(env_url: str, token: str, batch: List[Dict[str, Any]],
         url = env_url.rstrip("/") + PLATFORM_INGEST_PATH
         headers = {"Authorization": f"Bearer {token}"}
     headers["Content-Type"] = "application/json; charset=utf-8"
+    payload = json.dumps(batch)
+    seen = {"permanent": False}
+
+    def attempt():
+        try:
+            r = requests.post(url, headers=headers, data=payload, timeout=timeout)
+        except Exception as e:
+            return False, True, f"request failed: {e}", None
+        ok, retryable, detail, ra = classify_response(r.status_code, r.text, r.headers)
+        seen["permanent"] = (not ok) and (not retryable)
+        return ok, retryable, detail, ra
+
+    ok, detail, _ = with_retry(attempt, policy, sleep=sleep)
+    if ok:
+        return None, False
+    return detail, seen["permanent"]
+
+
+# --------------------------------------------------------------------------- #
+# checkpoint + dead-letter files
+# --------------------------------------------------------------------------- #
+
+def _load_state(path: str, index: str, time_from: str, time_to: str) -> Optional[dict]:
     try:
-        r = requests.post(url, headers=headers, data=json.dumps(batch),
-                          timeout=timeout)
-    except Exception as e:
-        return f"request failed: {e}"
-    if r.status_code >= 400:
-        return f"HTTP {r.status_code}: {r.text[:200]}"
-    return None
+        st = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if (st.get("index"), st.get("from"), st.get("to")) != (index, time_from, time_to):
+        return None  # a different window: ignore, will be overwritten
+    return st
+
+
+def _save_state(path: str, **st: Any) -> None:
+    Path(path).write_text(json.dumps(st), encoding="utf-8")
+
+
+def _dead_letter(path: str, records: List[Dict[str, Any]]) -> None:
+    with open(path, "a", encoding="utf-8") as fh:
+        for rec in records:
+            fh.write(json.dumps(rec) + "\n")
 
 
 def discover_indices(es_url: str, token: str, auth_scheme: str,
@@ -267,7 +339,10 @@ def run_backfill(es_url: str, es_token: str, es_auth: str, index: str,
                  page_size: int = 1000, limit: int = 0,
                  timestamp_field: str = "@timestamp", classic: bool = False,
                  verify_tls: bool = True, out=sys.stderr,
-                 on_progress=None) -> BackfillStats:
+                 on_progress=None, state_path: Optional[str] = None,
+                 dlq_path: Optional[str] = None,
+                 policy: Optional[RetryPolicy] = None,
+                 sleep=time.sleep) -> BackfillStats:
     stats = BackfillStats()
     tmin = parse_ts(time_from) or datetime.now(timezone.utc)
     tmax = parse_ts(time_to) or datetime.now(timezone.utc)
@@ -277,40 +352,125 @@ def run_backfill(es_url: str, es_token: str, es_auth: str, index: str,
         tmax = tmax.replace(tzinfo=timezone.utc)
     now = datetime.now(timezone.utc)
 
+    # checkpoint: resume an interrupted apply run instead of duplicating it
+    cursor: Optional[list] = None
+    prior_sent = prior_scanned = 0
+    if state_path and apply:
+        st = _load_state(state_path, index, time_from, time_to)
+        if st and st.get("done"):
+            stats.note = (f"checkpoint says this window is complete "
+                          f"({st.get('sent', 0)} records sent); delete "
+                          f"{state_path} to redo it")
+            if out is not None:
+                print(stats.note, file=out)
+            return stats
+        if st:
+            cursor = st.get("cursor")
+            prior_sent = int(st.get("sent") or 0)
+            prior_scanned = int(st.get("scanned") or 0)
+            stats.resumed = True
+            stats.note = f"resumed from checkpoint ({prior_sent} records already sent)"
+            if out is not None:
+                print(stats.note, file=out)
+
     def shaped() -> Iterator[Dict[str, Any]]:
         for hit in es_scan(es_url, es_token, es_auth, index, time_from, time_to,
-                           query, page_size, timestamp_field, verify_tls):
+                           query, page_size, timestamp_field, verify_tls,
+                           search_after=cursor, policy=policy, sleep=sleep):
             stats.scanned += 1
             rec = to_log_record(hit, now, stamp, tmin, tmax, timestamp_field)
             if rec is None:
                 stats.skipped += 1
                 continue
+            rec["__sort"] = hit.get("sort")
             stats.prepared += 1
             yield rec
             if limit and stats.prepared >= limit:
                 return
 
-    for batch in make_batches(shaped()):
-        stats.batches += 1
-        if stats.sample is None:
-            stats.sample = batch[0]
-            if out is not None:
-                print("sample record:", json.dumps(batch[0], indent=2)[:800], file=out)
-        if apply:
-            err = ingest_batch(env_url, dt_token, batch, classic=classic)
-            if err:
-                stats.errors.append(f"batch {stats.batches}: {err}")
-                if len(stats.errors) >= 5:
-                    stats.errors.append("too many batch failures; aborting")
-                    break
+    aborted = False
+    try:
+        for batch in make_batches(shaped()):
+            stats.batches += 1
+            payload = [{k: v for k, v in r.items() if k != "__sort"} for r in batch]
+            if stats.sample is None:
+                stats.sample = payload[0]
+                if out is not None:
+                    print("sample record:", json.dumps(payload[0], indent=2)[:800],
+                          file=out)
+            if apply:
+                err, permanent = ingest_batch(env_url, dt_token, payload,
+                                              classic=classic, policy=policy,
+                                              sleep=sleep)
+                if err and permanent:
+                    # the payload itself is rejected: dead-letter it and move on
+                    stats.errors.append(f"batch {stats.batches} dead-lettered: {err}")
+                    if dlq_path:
+                        _dead_letter(dlq_path, payload)
+                        stats.dlq += len(payload)
+                elif err:
+                    # retry envelope exhausted: the target is down. Keep the
+                    # checkpoint and stop so a re-run resumes cleanly.
+                    stats.errors.append(f"batch {stats.batches}: {err}")
+                    aborted = True
+                else:
+                    stats.sent += len(batch)
             else:
-                stats.sent += len(batch)
-        else:
-            stats.sent += len(batch)  # would-send count in dry runs
-        if on_progress is not None:
-            on_progress(stats)
+                stats.sent += len(batch)  # would-send count in dry runs
+            if apply and not aborted and state_path:
+                sort = batch[-1].get("__sort")
+                if sort is not None:
+                    _save_state(state_path, index=index, sent=prior_sent + stats.sent,
+                                scanned=prior_scanned + stats.scanned, cursor=sort,
+                                done=False, **{"from": time_from, "to": time_to})
+            if on_progress is not None:
+                on_progress(stats)
+            if aborted:
+                break
+    except RuntimeError as e:  # ES read failed after the retry envelope
+        stats.errors.append(str(e))
+        aborted = True
+    if apply and state_path and not aborted:
+        _save_state(state_path, index=index, sent=prior_sent + stats.sent,
+                    scanned=prior_scanned + stats.scanned, cursor=None,
+                    done=True, **{"from": time_from, "to": time_to})
     if on_progress is not None:
         on_progress(stats)
+    return stats
+
+
+def run_redrive(dlq_file: str, env_url: str, dt_token: str, apply: bool,
+                classic: bool = False, policy: Optional[RetryPolicy] = None,
+                sleep=time.sleep) -> BackfillStats:
+    """Re-send dead-lettered records. Successes are dropped from the file;
+    records that still fail stay in it for the next attempt."""
+    stats = BackfillStats()
+    records: List[Dict[str, Any]] = []
+    with open(dlq_file, "r", encoding="utf-8") as fh:
+        for line in fh:
+            if line.strip():
+                records.append(json.loads(line))
+    stats.scanned = stats.prepared = len(records)
+    remaining: List[Dict[str, Any]] = []
+    for batch in make_batches(iter(records)):
+        stats.batches += 1
+        if not apply:
+            stats.sent += len(batch)
+            continue
+        err, _permanent = ingest_batch(env_url, dt_token, batch, classic=classic,
+                                       policy=policy, sleep=sleep)
+        if err:
+            stats.errors.append(f"batch {stats.batches}: {err}")
+            remaining.extend(batch)
+        else:
+            stats.sent += len(batch)
+    if apply:
+        if remaining:
+            Path(dlq_file).write_text(
+                "".join(json.dumps(r) + "\n" for r in remaining), encoding="utf-8")
+            stats.dlq = len(remaining)
+        else:
+            Path(dlq_file).unlink()
     return stats
 
 
@@ -340,6 +500,23 @@ def backfill_cli(args) -> int:
                   f"{r['oldest'] or '?'} .. {r['newest'] or '?'}")
         return 0
 
+    if getattr(args, "redrive", None):
+        if args.apply and (not env_url or not dt_token):
+            print(f"error: --redrive --apply needs --env-url and a token in "
+                  f"{args.token_env}", file=sys.stderr)
+            return 2
+        stats = run_redrive(args.redrive, env_url, dt_token, apply=args.apply,
+                            classic=args.classic)
+        mode = "re-sent" if args.apply else "would re-send (dry run; pass --apply)"
+        print(f"{mode} {stats.sent} of {stats.prepared} dead-lettered record(s) "
+              f"in {stats.batches} batch(es)", file=sys.stderr)
+        if stats.dlq:
+            print(f"  {stats.dlq} record(s) still failing; kept in {args.redrive}",
+                  file=sys.stderr)
+        for e in stats.errors:
+            print(f"  error: {e}", file=sys.stderr)
+        return 1 if stats.errors else 0
+
     if not args.index:
         print("error: --index is required (or use --discover to list indices)",
               file=sys.stderr)
@@ -354,23 +531,37 @@ def backfill_cli(args) -> int:
         return 2
 
     indices = [i.strip() for i in args.index.split(",") if i.strip()]
+    if args.state and len(indices) > 1:
+        print("error: --state works with a single --index; omit it to get one "
+              "state file per index", file=sys.stderr)
+        return 2
     failed = False
     for index in indices:
         if len(indices) > 1:
             print(f"\n== {index} ==", file=sys.stderr)
+        safe = re.sub(r"[^A-Za-z0-9_-]", "_", index)
+        state_path = None if args.no_state else \
+            (args.state or f"e2d-backfill-{safe}.state.json")
+        dlq_path = args.dlq or (state_path.replace(".state.json", ".dlq.ndjson")
+                                if state_path else "e2d-backfill.dlq.ndjson")
         stats = run_backfill(
             es_url=args.es_url, es_token=es_token, es_auth=args.es_auth,
             index=index, time_from=args.time_from, time_to=args.time_to,
             query=args.query, env_url=env_url, dt_token=dt_token,
             stamp=args.stamp, apply=args.apply, page_size=args.page_size,
             limit=args.limit, timestamp_field=args.timestamp_field,
-            classic=args.classic, verify_tls=not args.insecure)
+            classic=args.classic, verify_tls=not args.insecure,
+            state_path=state_path, dlq_path=dlq_path)
 
         mode = "sent" if args.apply else "would send (dry run; pass --apply)"
         print(f"\nscanned {stats.scanned}, prepared {stats.prepared}, "
               f"skipped {stats.skipped} (no usable timestamp), "
               f"{mode} {stats.sent} record(s) in {stats.batches} batch(es)",
               file=sys.stderr)
+        if stats.dlq:
+            print(f"  {stats.dlq} record(s) dead-lettered to {dlq_path}; fix and "
+                  f"re-send with: e2d backfill --es-url {args.es_url} "
+                  f"--redrive {dlq_path} --apply", file=sys.stderr)
         for e in stats.errors:
             print(f"  error: {e}", file=sys.stderr)
         failed = failed or bool(stats.errors)

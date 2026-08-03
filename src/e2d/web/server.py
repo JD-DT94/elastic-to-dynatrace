@@ -170,6 +170,8 @@ class Sessions:
                                 for r in remediations_for_notes(it.notes)]
             items.append(d)
         from e2d.plan import build_plan
+        from e2d.score import build_scorecard, scorecard_line
+        sc = build_scorecard(summary)
         return {
             "counts": summary.counts(),
             "total": len(summary.items),
@@ -177,6 +179,8 @@ class Sessions:
             "secrets": list(dict.fromkeys(summary.secrets)),
             "skipped": summary.skipped,
             "plan": build_plan(summary),
+            "scorecard": sc,
+            "scorecard_line": scorecard_line(sc),
             "download": f"/download/{sid}",
         }
 
@@ -247,8 +251,12 @@ class Sessions:
         rows = [{"index": s.get("index", ""), "from": s.get("from", ""),
                  "to": s.get("to", ""), "state": "queued", "scanned": 0,
                  "prepared": 0, "sent": 0, "batches": 0, "skipped": 0,
-                 "errors": [], "sample": None, "dql_count": None}
+                 "dlq": 0, "note": "", "errors": [], "sample": None,
+                 "dql_count": None}
                 for s in cfg.get("selection", []) if s.get("index")]
+        sdir = self._base / sid
+        for n, row in enumerate(rows):
+            row["state_path"] = str(sdir / f"bf-{n}.state.json")
         if not rows:
             raise ValueError("no indices selected")
         job = {"state": "running", "apply": bool(cfg.get("apply")), "rows": rows}
@@ -263,7 +271,7 @@ class Sessions:
                     def prog(st, row=row):
                         row.update(scanned=st.scanned, prepared=st.prepared,
                                    sent=st.sent, batches=st.batches,
-                                   skipped=st.skipped)
+                                   skipped=st.skipped, dlq=st.dlq, note=st.note)
                         if st.sample is not None and row["sample"] is None:
                             row["sample"] = st.sample
                     stats = run_backfill(
@@ -276,8 +284,13 @@ class Sessions:
                         stamp=cfg.get("stamp", "spread"), apply=job["apply"],
                         limit=int(cfg.get("limit") or 0),
                         verify_tls=cfg.get("verify_tls", True),
-                        out=None, on_progress=prog)
+                        out=None, on_progress=prog,
+                        state_path=row["state_path"],
+                        dlq_path=row["state_path"].replace(".state.json",
+                                                           ".dlq.ndjson"))
                     row["errors"] = stats.errors
+                    row["dlq"] = stats.dlq
+                    row["note"] = stats.note
                     if job["apply"] and cfg.get("env_url") and cfg.get("dt_token"):
                         # count what actually landed, by source index
                         from e2d.parity import _dql_count
@@ -1163,6 +1176,8 @@ function render(d) {
     <span class="pill man"><b>${c.MANUAL}</b> manual</span>
     ${c.ERROR ? `<span class="pill err"><b>${c.ERROR}</b> error</span>` : ""}
   </div>`;
+  if (d.scorecard_line)
+    h += `<p class="note" style="margin:0 0 10px">${esc(d.scorecard_line)}</p>`;
   h += planBlock(d.plan);
   if (d.items.length) {
     h += `<div class="toolbar">
