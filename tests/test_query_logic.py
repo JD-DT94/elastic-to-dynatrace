@@ -111,6 +111,57 @@ def test_numeric_ranges_stay_numeric():
 
 
 # --------------------------------------------------------------------------- #
+# ingest lowercasing: Grail stores attribute keys lowercase, so camelCase
+# Elastic field references must be lowercased or they match nothing
+# --------------------------------------------------------------------------- #
+
+def test_camelcase_fields_are_lowercased_to_match_ingest():
+    out, _ = dql("kql", 'audit.logText: "denied"')
+    assert "audit.logtext" in out and "logText" not in out
+    out, _ = dql("lucene", "serviceContext.serviceName:checkout")
+    assert "servicecontext.servicename ==" in out
+    out, _ = dql("dsl", json.dumps(
+        {"query": {"term": {"serviceContext.serviceName": "checkout"}}}))
+    assert "servicecontext.servicename" in out
+    out, _ = dql("esql", 'FROM logs-* | WHERE audit.logText == "denied" '
+                         '| STATS c = COUNT() BY serviceContext.serviceName')
+    assert "audit.logtext" in out and "servicecontext.servicename" in out
+
+
+def test_esql_alias_definition_and_reference_stay_aligned():
+    out, _ = dql("esql", "FROM logs-* | EVAL dayOfWeek = TO_UPPER(host) "
+                         "| STATS c = COUNT() BY dayOfWeek")
+    assert "dayOfWeek" not in out and out.count("dayofweek") >= 2
+
+
+def test_explicit_field_map_wins_and_toggle_disables():
+    from e2d.config import MappingConfig
+    from e2d.core.queries import convert_query_text
+    cfg = MappingConfig(field_map={"audit.logText": "audit.LogTextCustom"})
+    r = convert_query_text('audit.logText: "x"', cfg, "logs")[0]
+    assert "audit.LogTextCustom" in r.dql   # explicit target kept verbatim
+    cfg2 = MappingConfig(lowercase_fields=False)
+    r2 = convert_query_text('audit.logText: "x"', cfg2, "logs")[0]
+    assert "audit.logText" in r2.dql
+
+
+def test_field_gap_matching_is_case_insensitive():
+    from e2d.migrate import Item, MigrationSummary
+    from e2d.plan import build_plan
+    s = MigrationSummary(items=[Item("dashboard", "d.ndjson", "OK"),
+                                Item("pipeline", "p.conf", "OK")])
+    s.dashboard_fields = {"d.ndjson": ["audit.logtext"]}
+    s.pipeline_fields = {"p.conf": ["audit.logText"]}
+    assert build_plan(s)["field_gaps"] == []
+
+
+def test_backfill_flatten_lowercases_keys_like_ingest_does():
+    from e2d.backfill import flatten
+    out = flatten({"serviceContext": {"serviceName": "checkout"}})
+    assert out == {"servicecontext.servicename": "checkout"}
+
+
+# --------------------------------------------------------------------------- #
 # negation and grouping still hold after the changes
 # --------------------------------------------------------------------------- #
 

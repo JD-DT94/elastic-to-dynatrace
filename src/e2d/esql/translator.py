@@ -601,7 +601,10 @@ def _translate_assignment(text: str, ctx: _Ctx, is_stats: bool) -> str:
     """Translate `alias = expr` or bare `expr`, mapping the alias too."""
     eq = _find_top_level_assign(text)
     if eq is not None:
-        alias = text[:eq].strip().strip("`")
+        # the alias goes through the same field normalization as references to
+        # it, so `EVAL dayOfWeek = ...` and a later `BY dayOfWeek` stay aligned
+        alias = ctx.config.resolve_field(text[:eq].strip().strip("`"),
+                                         ctx.data_object)
         expr = text[eq + 1:].strip()
         dql_expr = translate_expr(expr, ctx.config, ctx.data_object, ctx.report, is_stats=is_stats)
         return f"{_quote_field_if_needed(alias)} = {dql_expr}"

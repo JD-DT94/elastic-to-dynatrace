@@ -835,7 +835,9 @@ PAGE = r"""<!DOCTYPE html>
   <p class="note">Route Elastic index patterns to Grail data objects and rename fields.
      Rules are saved in this browser and applied to every conversion automatically;
      a <code>mapping.config.json</code> dropped with your files takes precedence.
-     Custom index rules are tried before the built-in defaults.</p>
+     Custom index rules are tried before the built-in defaults. Field references are lowercased automatically because Dynatrace
+     normalizes attribute keys to lowercase at ingest; an explicit rename here
+     overrides that.</p>
   <div class="card">
     <h3 class="map-h">Index patterns &#8594; data objects</h3>
     <table id="map_idx"></table>

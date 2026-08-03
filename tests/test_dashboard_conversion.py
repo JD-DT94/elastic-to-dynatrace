@@ -99,7 +99,8 @@ def test_terms_agg_strips_keyword_suffix():
          "params": {"field": "tracking.transactionName.keyword", "size": 100}},
     ]
     plan = build_agg_plan(aggs, MappingConfig(), "logs", Report())
-    assert plan.by_fields == ["tracking.transactionName"]
+    # lowercased: Grail normalizes attribute keys to lowercase at ingest
+    assert plan.by_fields == ["tracking.transactionname"]
 
 
 def test_field_audit_splits_builtin_and_custom():
@@ -160,7 +161,8 @@ def test_search_filter_phrase_and_exists():
 def test_kql_quoted_field_name():
     # KQL allows quoted field names; must not become a full-text term
     out = kql('"tracking.transactionName.keyword": "tx.salesforce.guarantee"')
-    assert out == 'tracking.transactionName == "tx.salesforce.guarantee"'
+    # lowercased: Grail normalizes attribute keys to lowercase at ingest
+    assert out == 'tracking.transactionname == "tx.salesforce.guarantee"'
     assert "matchesPhrase" not in out
 
 

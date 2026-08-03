@@ -103,12 +103,15 @@ def restamp(original: datetime, now: datetime, mode: str,
 
 
 def flatten(src: Dict[str, Any], prefix: str = "", depth: int = 0) -> Dict[str, str]:
-    """Flatten a _source document to dotted string attributes (5 levels deep)."""
+    """Flatten a _source document to dotted string attributes (5 levels deep).
+
+    Keys are lowercased to mirror Dynatrace's ingest normalization, so the
+    sample record and dedup counts show exactly what lands in Grail."""
     out: Dict[str, str] = {}
     if depth >= 5:
         return out
     for k, v in src.items():
-        key = f"{prefix}{k}"
+        key = f"{prefix}{k}".lower()
         if isinstance(v, dict):
             out.update(flatten(v, key + ".", depth + 1))
         elif isinstance(v, list):

@@ -70,6 +70,11 @@ so any duplicates stay detectable in DQL. Every run also writes
 `migration_report.json` (scorecard, per-item outcomes, plan) for CI and
 tooling.
 
+Translated field references are lowercased automatically (Dynatrace
+normalizes log attribute keys to lowercase at ingest, so `audit.logText`
+lands as `audit.logtext`); disable with `"lowercase_fields": false` or
+override per field with an explicit rename.
+
 Use a `mapping.config.json` to route index patterns to data objects and
 rename fields — see `samples/mapping.config.json`. Drop it in with your
 export and it is applied automatically.

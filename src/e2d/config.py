@@ -76,6 +76,12 @@ class MappingConfig:
     data_object_field_map: Dict[str, Dict[str, str]] = field(
         default_factory=lambda: {k: dict(v) for k, v in DEFAULT_DATA_OBJECT_FIELD_MAP.items()}
     )
+    # Dynatrace normalizes log attribute keys to lowercase at ingest, so a
+    # camelCase Elastic field (audit.logText) lands in Grail as audit.logtext.
+    # Translated field references are lowercased to match; an explicit
+    # field_map target always wins verbatim. Disable with
+    # {"lowercase_fields": false} for data whose keys keep their case.
+    lowercase_fields: bool = True
 
     # ---- resolution helpers -------------------------------------------------
 
@@ -106,6 +112,8 @@ class MappingConfig:
                 return do_map[name]
         if name in self.field_map:
             return self.field_map[name]
+        if self.lowercase_fields and name.lower() != name:
+            return name.lower()
         return name
 
     # ---- loading ------------------------------------------------------------
@@ -127,4 +135,6 @@ class MappingConfig:
         if "data_object_field_map" in data:
             for do, m in data["data_object_field_map"].items():
                 cfg.data_object_field_map.setdefault(do, {}).update(m)
+        if "lowercase_fields" in data:
+            cfg.lowercase_fields = bool(data["lowercase_fields"])
         return cfg

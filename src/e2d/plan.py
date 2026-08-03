@@ -43,12 +43,14 @@ def build_plan(summary) -> dict:
         if it.status != "ERROR" and it.source not in by_cat.get(it.category, ()):
             by_cat.setdefault(it.category, []).append(it.source)
 
+    # Dynatrace lowercases attribute keys at ingest, so a pipeline exporting
+    # audit.logText satisfies a dashboard that queries audit.logtext
     produced = set()
     for fields in getattr(summary, "pipeline_fields", {}).values():
-        produced.update(fields)
+        produced.update(f.lower() for f in fields)
     gaps = []
     for src, fields in sorted(getattr(summary, "dashboard_fields", {}).items()):
-        missing = sorted(f for f in fields if f not in produced)
+        missing = sorted(f for f in fields if f.lower() not in produced)
         if missing:
             gaps.append({"dashboard": src, "fields": missing})
 
