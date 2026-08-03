@@ -165,6 +165,11 @@ class Sessions:
         items = []
         for it in summary.items:
             d = asdict(it)
+            try:
+                d["source_text"] = (dirs["in"] / it.source).read_text(
+                    encoding="utf-8")[:20000]
+            except OSError:
+                d["source_text"] = ""
             d["artifacts"] = _read_artifacts(dirs["out"], it.outputs)
             d["remediation"] = [{"title": r.title, "what": r.what, "fix": r.fix}
                                 for r in remediations_for_notes(it.notes)]
@@ -181,6 +186,7 @@ class Sessions:
             "plan": build_plan(summary),
             "scorecard": sc,
             "scorecard_line": scorecard_line(sc),
+            "unmatched": summary.unmatched_indexes,
             "download": f"/download/{sid}",
         }
 
@@ -637,6 +643,15 @@ PAGE = r"""<!DOCTYPE html>
            border-radius:6px; padding:2px 7px; margin-left:8px; white-space:nowrap; }
   .steps h3 { display:flex; align-items:center; flex-wrap:wrap; gap:4px; }
   .map-h { margin:0 0 6px; font-size:14.5px; }
+  .egrow { margin-top:12px; display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  .egchip { margin:0; padding:5px 12px; font-size:12px; font-weight:600;
+            background:transparent; border:1px solid var(--line2); color:var(--mut);
+            border-radius:999px; box-shadow:none; }
+  .egchip:hover:not(:disabled) { border-color:var(--blue); color:var(--ink); filter:none; }
+  .gap select { background:rgba(0,0,0,.35); border:1px solid var(--line2); color:var(--ink);
+                border-radius:8px; padding:6px 9px; font:12.5px ui-monospace,Consolas,monospace; }
+  .srcview { margin-top:10px; }
+  .srcview summary { cursor:pointer; }
   #map_idx input, #map_fld input, #map_idx select {
     background:rgba(0,0,0,.35); border:1px solid var(--line2); color:var(--ink);
     border-radius:8px; padding:7px 9px; width:100%;
@@ -685,20 +700,12 @@ PAGE = r"""<!DOCTYPE html>
 <body>
 <header class="top">
   <div class="bar">
-    <a class="logo" href="#convert" title="Home"><span class="mark">e2d</span> elastic-to-dynatrace</a>
-    <nav class="tabs">
-      <a class="tab" data-tab="convert" href="#convert">Convert</a>
-      <a class="tab" data-tab="live" href="#live">Live Elastic</a>
-      <a class="tab" data-tab="query" href="#query">Paste a query</a>
-      <a class="tab" data-tab="process" href="#process">Process</a>
-      <a class="tab" data-tab="mapping" href="#mapping">Mapping</a>
-      <a class="tab" data-tab="reference" href="#reference">Reference</a>
-    </nav>
+    <span class="logo"><span class="mark">e2d</span> elastic-to-dynatrace</span>
+
     <span class="local">localhost only, nothing leaves this machine</span>
   </div>
 </header>
 <main class="wrap">
-  <section class="view" id="view-convert">
   <div class="hero">
     <h1>Elastic &#8594; Dynatrace</h1>
     <p class="tagline">Drop your exports, a <code>.zip</code> or individual
@@ -719,18 +726,67 @@ PAGE = r"""<!DOCTYPE html>
          &middot; KQL/Lucene &middot; Logstash &middot; ingest pipelines</p>
       <input type="file" id="picker" multiple class="hide">
     </div>
+    <div class="egrow note">Try an example:
+      <button class="egchip" data-eg="dashboard">dashboard</button>
+      <button class="egchip" data-eg="query">query</button>
+      <button class="egchip" data-eg="pipeline">pipeline</button>
+      <button class="egchip" data-eg="alert">alert</button>
+      <button class="egchip" data-eg="slo">SLO</button>
+      <button class="egchip" data-eg="transform">transform</button>
+      <button class="egchip" data-eg="shipper">filebeat</button>
+      <button class="egchip" data-eg="synthetic">heartbeat</button>
+      <button class="egchip" data-eg="config">ILM</button>
+    </div>
     <ul class="files" id="filelist"></ul>
     <button id="go" disabled>Convert</button>
     <div class="err-box hide" id="err"></div>
   </div>
 
+  <div class="card" id="quick" style="margin-top:16px">
+    <h2 style="margin:0 0 4px;font-size:17px">Paste a query</h2>
+    <p class="note" style="margin:0 0 10px">Paste one ES|QL, Query DSL, KQL or Lucene query.
+       The DQL appears below with any warnings, ready to copy.</p>
+    <textarea id="qin" class="qbox" spellcheck="false"
+      placeholder="FROM logs-* | WHERE status &gt;= 500 | STATS count = COUNT() BY host.name"></textarea>
+    <div class="conn">
+      <select id="qlang">
+        <option value="auto">Detect language</option>
+        <option value="esql">ES|QL</option>
+        <option value="dsl">Query DSL (JSON)</option>
+        <option value="kql">KQL</option>
+        <option value="lucene">Lucene</option>
+      </select>
+      <button id="qgo">Convert query</button>
+    </div>
+    <div id="qout"></div>
+  </div>
+
   <div class="card hide" id="stage-result" style="margin-top:24px"></div>
-  </section>
-  <section class="view" id="view-live">
-  <h2 style="margin-top:26px">Live Elastic estate</h2>
-  <p class="note">Pull convertible objects and backfill history straight from the
-     cluster. Credentials stay in memory on this machine.</p>
-  <details class="card" id="pull-card" style="margin-bottom:16px" open>
+
+  <details class="card" id="mapping-card" style="margin-top:16px">
+    <summary class="h">Mapping rules (applied to every conversion)</summary>
+    <p class="note">Route Elastic index patterns to Grail data objects and rename fields.
+     Rules are saved in this browser and applied to every conversion automatically;
+     a <code>mapping.config.json</code> dropped with your files takes precedence.
+     Custom index rules are tried before the built-in defaults. Field references are lowercased automatically because Dynatrace
+     normalizes attribute keys to lowercase at ingest; an explicit rename here
+     overrides that.</p>
+
+    <h3 class="map-h">Index patterns &#8594; data objects</h3>
+    <table id="map_idx"></table>
+    <button id="map_idx_add" class="copy" style="margin-top:8px">Add rule</button>
+    <h3 class="map-h" style="margin-top:22px">Field renames</h3>
+    <table id="map_fld"></table>
+    <button id="map_fld_add" class="copy" style="margin-top:8px">Add rename</button>
+    <div class="row">
+      <button id="map_dl">Download mapping.config.json</button>
+      <button id="map_copy" class="copy" style="padding:9px 16px;font-size:13px">Copy JSON</button>
+      <span class="note" id="map_note"></span>
+    </div>
+  
+  </details>
+
+  <details class="card" id="pull-card" style="margin-top:16px">
     <summary class="h">Pull from a live Elastic estate (optional)</summary>
     <p class="note">Connect to Kibana/Elasticsearch and pull dashboards, rules, ingest pipelines
        and watchers via their APIs. Credentials are kept in memory and never written to disk.</p>
@@ -744,7 +800,7 @@ PAGE = r"""<!DOCTYPE html>
     <div id="discovery"></div>
   </details>
 
-  <details class="card" id="backfill-card" style="margin-bottom:16px" open>
+  <details class="card" id="backfill-card" style="margin-top:16px">
     <summary class="h">Backfill historical logs (past the 24h wall)</summary>
     <p class="note">Streams old logs straight from Elasticsearch into Dynatrace: each record
        is re-stamped into the accepted window and keeps its true event time in
@@ -771,110 +827,9 @@ PAGE = r"""<!DOCTYPE html>
     </div>
   </details>
 
-  </section>
-  <section class="view" id="view-query">
-  <div class="card" id="quick" style="margin-top:16px">
-    <h2 style="margin:0 0 4px;font-size:17px">Paste a query</h2>
-    <p class="note" style="margin:0 0 10px">Paste one ES|QL, Query DSL, KQL or Lucene query.
-       The DQL appears below with any warnings, ready to copy.</p>
-    <textarea id="qin" class="qbox" spellcheck="false"
-      placeholder="FROM logs-* | WHERE status &gt;= 500 | STATS count = COUNT() BY host.name"></textarea>
-    <div class="conn">
-      <select id="qlang">
-        <option value="auto">Detect language</option>
-        <option value="esql">ES|QL</option>
-        <option value="dsl">Query DSL (JSON)</option>
-        <option value="kql">KQL</option>
-        <option value="lucene">Lucene</option>
-      </select>
-      <button id="qgo">Convert query</button>
-    </div>
-    <div id="qout"></div>
-  </div>
 
-  </section>
-  <section class="view" id="view-process">
-  <h2 style="margin-top:26px">Migration process</h2>
-  <p class="note">The end-to-end flow of a migration, in working order. Each step says where it
-     happens. Ticks are saved in this browser.</p>
-  <div class="card">
-      <div class="gap" style="margin:0 0 16px">
-    <b>Where each step happens.</b>
-    <span class="note">The chip on each step says where the work is done: a tab of
-    this GUI, the CLI, your servers, or inside Dynatrace itself. This GUI covers
-    converting, live pull, backfill and deploy; Terraform and OpenPipeline work
-    lands in Dynatrace.</span>
-  </div>
-    <p class="note" id="steps_done" style="margin:0 0 14px"></p>
-    <ol class="steps">
-      <li data-step="0"><span class="dot">1</span>
-        <h3><label><input type="checkbox" class="step-box"> Inventory and pull</label>
-        <span class="where">Convert + Live Elastic tabs</span></h3>
-        <p>Collect your Kibana/Elastic exports. The locally-run GUI can also pull dashboards, rules, pipelines and watchers straight from the estate.</p></li>
-      <li data-step="1"><span class="dot">2</span>
-        <h3><label><input type="checkbox" class="step-box"> Convert everything</label>
-        <span class="where">Convert tab</span></h3>
-        <p>Drop the lot on the Convert tab. Triage the results: OK ships as-is, REVIEW needs a look, MANUAL needs a person. MIGRATION_REPORT.md holds the detail.</p></li>
-      <li data-step="2"><span class="dot">3</span>
-        <h3><label><input type="checkbox" class="step-box"> Set mapping rules</label>
-        <span class="where">Mapping tab</span></h3>
-        <p>On the Mapping tab, route index patterns to data objects and rename fields, then re-convert until nothing falls back to defaults it shouldn't.</p></li>
-      <li data-step="3"><span class="dot">4</span>
-        <h3><label><input type="checkbox" class="step-box"> Storage and routing</label>
-        <span class="where">In Dynatrace</span></h3>
-        <p>Create Grail buckets from CUTOVER-PLAN.md so retention matches your ILM obligations, and set OpenPipeline routing for each log source.</p></li>
-      <li data-step="4"><span class="dot">5</span>
-        <h3><label><input type="checkbox" class="step-box"> Deploy pipelines</label>
-        <span class="where">Terraform / Dynatrace</span></h3>
-        <p>terraform apply each pipelines_tf/ module, or paste the .dpl stages into OpenPipeline. Fields must exist before anything downstream lights up.</p></li>
-      <li data-step="5"><span class="dot">6</span>
-        <h3><label><input type="checkbox" class="step-box"> Repoint shippers and dual-ship</label>
-        <span class="where">Your servers</span></h3>
-        <p>Apply the shippers/*.otel.yaml collector configs, or add the dual-ship output from CUTOVER-PLAN.md so both stacks receive logs during validation.</p></li>
-      <li data-step="6"><span class="dot">7</span>
-        <h3><label><input type="checkbox" class="step-box"> Verify fields and parity</label>
-        <span class="where">CLI</span></h3>
-        <p>Check each dashboard's .fields.md manifest, run e2d verify --data for empty tiles, and e2d parity to compare counts between the stacks.</p></li>
-      <li data-step="7"><span class="dot">8</span>
-        <h3><label><input type="checkbox" class="step-box"> Import dashboards and SLOs</label>
-        <span class="where">Deploy panel / Dynatrace</span></h3>
-        <p>Upload dashboard JSON (or push from the locally-run GUI), then create SLOs from the slos/ definitions.</p></li>
-      <li data-step="8"><span class="dot">9</span>
-        <h3><label><input type="checkbox" class="step-box"> Backfill history where needed</label>
-        <span class="where">Live Elastic tab / CLI</span></h3>
-        <p>For indexes whose history must live in Dynatrace, use the backfill panel or e2d backfill from the CLI. Query it by original_timestamp afterwards.</p></li>
-      <li data-step="9"><span class="dot">10</span>
-        <h3><label><input type="checkbox" class="step-box"> Alerts last, then cutover</label>
-        <span class="where">In Dynatrace</span></h3>
-        <p>Enable anomaly detectors once data flows and thresholds are reviewed. Mark Elasticsearch read-only per the plan, and decommission when retention lapses.</p></li>
-    </ol>
-    <button id="steps_reset" class="copy" style="margin-top:4px">Reset checklist</button>
-  </div>
-  </section>
-  <section class="view" id="view-mapping">
-  <h2 style="margin-top:26px">Mapping rules</h2>
-  <p class="note">Route Elastic index patterns to Grail data objects and rename fields.
-     Rules are saved in this browser and applied to every conversion automatically;
-     a <code>mapping.config.json</code> dropped with your files takes precedence.
-     Custom index rules are tried before the built-in defaults. Field references are lowercased automatically because Dynatrace
-     normalizes attribute keys to lowercase at ingest; an explicit rename here
-     overrides that.</p>
-  <div class="card">
-    <h3 class="map-h">Index patterns &#8594; data objects</h3>
-    <table id="map_idx"></table>
-    <button id="map_idx_add" class="copy" style="margin-top:8px">Add rule</button>
-    <h3 class="map-h" style="margin-top:22px">Field renames</h3>
-    <table id="map_fld"></table>
-    <button id="map_fld_add" class="copy" style="margin-top:8px">Add rename</button>
-    <div class="row">
-      <button id="map_dl">Download mapping.config.json</button>
-      <button id="map_copy" class="copy" style="padding:9px 16px;font-size:13px">Copy JSON</button>
-      <span class="note" id="map_note"></span>
-    </div>
-  </div>
-  </section>
-  <section class="view" id="view-reference">
-  <h2>What it converts</h2>
+  <details class="card" style="margin-top:16px">
+    <summary class="h">What it converts, and limits</summary>
   <div class="grid">
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -885,7 +840,6 @@ PAGE = r"""<!DOCTYPE html>
       <p>Lens incl. formulas, TSVB, legacy visualizations, saved searches, controls, and Vega
          with an embedded ES query <b>&#8594; dashboard JSON</b> with DQL tiles, variables and
          series colours. Import in the Dashboards app or push from here.</p>
-      <button class="try" data-eg="dashboard">Try an example</button>
     </div>
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -894,7 +848,6 @@ PAGE = r"""<!DOCTYPE html>
       <h3>Queries</h3>
       <p>ES|QL, Query DSL, KQL and Lucene <b>&#8594; DQL</b>, linted offline before it
          reaches you.</p>
-      <button class="try" data-eg="query">Try an example</button>
     </div>
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -904,7 +857,6 @@ PAGE = r"""<!DOCTYPE html>
       <p>Logstash <code>.conf</code> and Elasticsearch ingest pipelines
          <b>&#8594; OpenPipeline stages</b>: a readable <code>.dpl</code> plus a deployable
          Terraform module.</p>
-      <button class="try" data-eg="pipeline">Try an example</button>
     </div>
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -915,7 +867,6 @@ PAGE = r"""<!DOCTYPE html>
       <p>Watchers and Kibana alerting rules, incl. index-threshold and ES-query rules
          <b>&#8594; Davis anomaly detectors + Workflows</b> as Terraform. Detectors can also
          be pushed from here.</p>
-      <button class="try" data-eg="alert">Try an example</button>
     </div>
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -924,7 +875,6 @@ PAGE = r"""<!DOCTYPE html>
       <h3>Transforms</h3>
       <p>Continuous transforms <b>&#8594; rollup DQL</b> with a migration note per
          transform.</p>
-      <button class="try" data-eg="transform">Try an example</button>
     </div>
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -937,7 +887,6 @@ PAGE = r"""<!DOCTYPE html>
       <h3>Cluster config</h3>
       <p>ILM policies, index templates and enrich policies <b>&#8594; written guides</b> for
          bucket retention, OpenPipeline routing and Grail lookups.</p>
-      <button class="try" data-eg="config">Try an example</button>
     </div>
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -949,7 +898,6 @@ PAGE = r"""<!DOCTYPE html>
       <p>Kibana SLO definitions <b>&#8594; DQL SLI queries</b> with the objective and
          window carried over, ready for the SLO app or API. APM indicators are flagged
          for the service-native path.</p>
-      <button class="try" data-eg="slo">Try an example</button>
     </div>
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -959,7 +907,6 @@ PAGE = r"""<!DOCTYPE html>
       <p>Filebeat configs <b>&#8594; OpenTelemetry Collector configs</b> shipping straight
          to Dynatrace; Metricbeat modules are mapped to OneAgent and Extensions Hub
          advice.</p>
-      <button class="try" data-eg="shipper">Try an example</button>
     </div>
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -969,7 +916,6 @@ PAGE = r"""<!DOCTYPE html>
       <h3>Synthetic monitors</h3>
       <p>Heartbeat HTTP monitors <b>&#8594; Dynatrace Synthetic monitor definitions</b>;
          TCP and ICMP checks are flagged for network availability monitors.</p>
-      <button class="try" data-eg="synthetic">Try an example</button>
     </div>
   </div>
   <p class="alsonote">Every run also writes <code>MIGRATION_REPORT.md</code> with a
@@ -1000,7 +946,7 @@ PAGE = r"""<!DOCTYPE html>
           schedules the dual-ship overlap instead.</li>
     </ul>
   </div>
-  </section>
+  </details>
 </main>
 
 <script>
@@ -1166,6 +1112,9 @@ function itemCard(it, idx) {
   const notes = [...new Set(it.notes||[])];
   if (notes.length)
     h += `<ul class="notes">` + notes.map(n=>`<li class="note">${esc(n)}</li>`).join("") + `</ul>`;
+  if (it.source_text)
+    h += `<details class="srcview"><summary class="note">original source</summary>
+          <pre>${esc(it.source_text)}</pre></details>`;
   for (const r of (it.remediation||[])) {
     h += `<details class="remedy">
             <summary>How to fix: ${esc(r.title)}</summary>
@@ -1201,6 +1150,7 @@ function render(d) {
   </div>`;
   if (d.scorecard_line)
     h += `<p class="note" style="margin:0 0 10px">${esc(d.scorecard_line)}</p>`;
+  h += tuneBlock(d);
   h += planBlock(d.plan);
   if (d.items.length) {
     h += `<div class="toolbar">
@@ -1522,44 +1472,6 @@ async function bfPoll() {
 $("#bf_dry").addEventListener("click", () => bfRun(false));
 $("#bf_go").addEventListener("click", () => bfRun(true));
 
-// ---- tab routing (logo = home) ------------------------------------------
-const VIEWS = ["convert", "live", "query", "process", "mapping", "reference"];
-function showView(name) {
-  if (!VIEWS.includes(name)) name = "convert";
-  for (const v of VIEWS) {
-    document.getElementById("view-" + v).classList.toggle("on", v === name);
-    document.querySelector(`[data-tab="${v}"]`).classList.toggle("on", v === name);
-  }
-}
-window.addEventListener("hashchange", () => showView(location.hash.slice(1)));
-showView(location.hash.slice(1));
-
-// ---- migration process checklist (saved in this browser) -----------------
-const STEPS_KEY = "e2d_steps";
-function stepsState() {
-  try { return JSON.parse(LS.getItem(STEPS_KEY)) || {}; } catch (e) { return {}; }
-}
-function paintSteps() {
-  const st = stepsState();
-  const items = document.querySelectorAll(".steps li");
-  let done = 0;
-  items.forEach(li => {
-    const on = !!st[li.dataset.step];
-    li.classList.toggle("done", on);
-    li.querySelector(".step-box").checked = on;
-    done += on;
-  });
-  $("#steps_done").textContent = `${done} of ${items.length} steps done`;
-}
-document.querySelectorAll(".step-box").forEach(b => b.addEventListener("change", e => {
-  const st = stepsState();
-  st[e.target.closest("li").dataset.step] = e.target.checked;
-  LS.setItem(STEPS_KEY, JSON.stringify(st));
-  paintSteps();
-}));
-$("#steps_reset").addEventListener("click", () => { LS.removeItem(STEPS_KEY); paintSteps(); });
-paintSteps();
-
 // ---- mapping rules builder ------------------------------------------------
 const MAP_KEY = "e2d_mapping";
 const DATA_OBJECTS = ["logs", "spans", "events", "user.events", "bizevents", "__metrics__"];
@@ -1609,7 +1521,7 @@ $("#map_idx_add").addEventListener("click", () => {
 $("#map_fld_add").addEventListener("click", () => {
   const m = mapState(); m.field_map.push(["", ""]); saveMapState(m);
 });
-document.getElementById("view-mapping").addEventListener("input", e => {
+document.getElementById("mapping-card").addEventListener("input", e => {
   const i = +e.target.dataset.i; const m = mapState();
   if (e.target.classList.contains("mi-pat")) m.index_map[i].pattern = e.target.value;
   else if (e.target.classList.contains("mf-from")) m.field_map[i][0] = e.target.value;
@@ -1618,12 +1530,12 @@ document.getElementById("view-mapping").addEventListener("input", e => {
   LS.setItem(MAP_KEY, JSON.stringify(m));
   $("#map_note").textContent = "Applied automatically to every conversion on this machine.";
 });
-document.getElementById("view-mapping").addEventListener("change", e => {
+document.getElementById("mapping-card").addEventListener("change", e => {
   if (!e.target.classList.contains("mi-obj")) return;
   const m = mapState(); m.index_map[+e.target.dataset.i].data_object = e.target.value;
   LS.setItem(MAP_KEY, JSON.stringify(m));
 });
-document.getElementById("view-mapping").addEventListener("click", e => {
+document.getElementById("mapping-card").addEventListener("click", e => {
   const i = +e.target.dataset.i; const m = mapState();
   if (e.target.classList.contains("mi-del")) { m.index_map.splice(i, 1); saveMapState(m); }
   if (e.target.classList.contains("mf-del")) { m.field_map.splice(i, 1); saveMapState(m); }
@@ -1637,6 +1549,34 @@ $("#map_dl").addEventListener("click", () => {
 $("#map_copy").addEventListener("click", e => copyText(mappingJson(), e.target));
 paintMap();
 
+// ---- tune the conversion from flagged results ----------------------------
+function tuneRegex(pat) {
+  const prefix = pat.split("*")[0].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return "^" + prefix;
+}
+function tuneBlock(d) {
+  const un = d.unmatched || [];
+  if (!un.length) return "";
+  let h = `<div class="gap" id="tune"><b>Tune the conversion.</b>
+    <span class="note">These index patterns had no mapping rule and fell back to
+    logs. Pick the right target and re-convert; the rules are saved for future
+    runs too.</span><table>`;
+  h += un.map(p => `<tr><td><code>${esc(p)}</code></td>
+    <td><select class="tune-obj" data-pat="${esc(p)}">${DATA_OBJECTS.map(o =>
+      `<option value="${o}"${o === "logs" ? " selected" : ""}>` +
+      `${o === "__metrics__" ? "metrics (timeseries)" : o}</option>`).join("")}</select></td></tr>`).join("");
+  h += `</table><button id="tune-apply" style="margin-top:10px">Save rules & re-convert</button></div>`;
+  return h;
+}
+
+result.addEventListener("click", e => {
+  if (e.target.id !== "tune-apply") return;
+  const m = mapState();
+  document.querySelectorAll(".tune-obj").forEach(s =>
+    m.index_map.push({ pattern: tuneRegex(s.dataset.pat), data_object: s.value }));
+  saveMapState(m);
+  go.click();
+});
 </script>
 </body>
 </html>

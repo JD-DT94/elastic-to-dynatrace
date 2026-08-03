@@ -177,6 +177,15 @@
            border-radius:6px; padding:2px 7px; margin-left:8px; white-space:nowrap; }
   .steps h3 { display:flex; align-items:center; flex-wrap:wrap; gap:4px; }
   .map-h { margin:0 0 6px; font-size:14.5px; }
+  .egrow { margin-top:12px; display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  .egchip { margin:0; padding:5px 12px; font-size:12px; font-weight:600;
+            background:transparent; border:1px solid var(--line2); color:var(--mut);
+            border-radius:999px; box-shadow:none; }
+  .egchip:hover:not(:disabled) { border-color:var(--blue); color:var(--ink); filter:none; }
+  .gap select { background:rgba(0,0,0,.35); border:1px solid var(--line2); color:var(--ink);
+                border-radius:8px; padding:6px 9px; font:12.5px ui-monospace,Consolas,monospace; }
+  .srcview { margin-top:10px; }
+  .srcview summary { cursor:pointer; }
   #map_idx, #map_fld { width:100%; border-collapse:collapse; }
   #map_idx th, #map_fld th { text-align:left; color:var(--faint); font-weight:600;
     font-size:12px; padding:6px 6px 6px 0; }
@@ -193,20 +202,13 @@
 <body>
 <header class="top">
   <div class="bar wrap" style="padding-left:24px;padding-right:24px">
-    <a class="logo" href="#convert" title="Home"><span class="mark">e2d</span> elastic-to-dynatrace</a>
-    <nav class="tabs">
-      <a class="tab" data-tab="convert" href="#convert">Convert</a>
-      <a class="tab" data-tab="query" href="#query">Paste a query</a>
-      <a class="tab" data-tab="process" href="#process">Process</a>
-      <a class="tab" data-tab="mapping" href="#mapping">Mapping</a>
-      <a class="tab" data-tab="reference" href="#reference">Reference</a>
-    </nav>
+    <span class="logo"><span class="mark">e2d</span> elastic-to-dynatrace</span>
+
     <span class="local">Runs in this tab, files are never uploaded</span>
   </div>
 </header>
 
 <main class="wrap">
-  <section class="view" id="view-convert">
   <div class="hero">
     <h1>Elastic &#8594; Dynatrace</h1>
     <p class="tagline">Converts dashboards, queries, pipelines, alerts and transforms to
@@ -227,6 +229,17 @@
         <code>.zip</code>. Add a <code>mapping.config.json</code> to customise mapping.</div>
     </div>
     <input id="file" type="file" multiple hidden>
+    <div class="egrow note">Try an example:
+      <button class="egchip" data-eg="dashboard">dashboard</button>
+      <button class="egchip" data-eg="query">query</button>
+      <button class="egchip" data-eg="pipeline">pipeline</button>
+      <button class="egchip" data-eg="alert">alert</button>
+      <button class="egchip" data-eg="slo">SLO</button>
+      <button class="egchip" data-eg="transform">transform</button>
+      <button class="egchip" data-eg="shipper">filebeat</button>
+      <button class="egchip" data-eg="synthetic">heartbeat</button>
+      <button class="egchip" data-eg="config">ILM</button>
+    </div>
     <div class="row">
       <button id="convert" disabled>Convert</button>
       <button id="download" disabled>Download results (.zip)</button>
@@ -235,14 +248,6 @@
     </div>
   </div>
 
-  <h2 id="report-lab" hidden>Results</h2>
-  <div class="panel" id="report" hidden>
-    <div class="counts" id="counts"></div>
-    <div id="items"></div>
-  </div>
-
-  </section>
-  <section class="view" id="view-query">
   <h2>Paste a query</h2>
   <div class="panel" id="quick">
     <p class="note" style="margin:0 0 10px">Paste one ES|QL, Query DSL, KQL or Lucene query.
@@ -262,76 +267,22 @@
     <div id="qout"></div>
   </div>
 
-  </section>
-  <section class="view" id="view-process">
-  <h2>Migration process</h2>
-  <p class="lede">The end-to-end flow of a migration, in working order. Each step says where it
-     happens. Ticks are saved in this browser.</p>
-  <div class="panel">
-      <div class="gap" style="margin:0 0 16px">
-    <b>What this page can and cannot do.</b>
-    <span class="note">This page runs entirely in your browser and never connects
-    to anything, so it covers the conversion steps only. Steps marked
-    <span class="where">Local GUI</span> or <span class="where">CLI</span> need the
-    tool running on a machine that can reach your Elastic and Dynatrace:
-    <code>pip install git+https://github.com/JD-DT94/elastic-to-dynatrace</code>
-    then <code>e2d web</code>. The where-chip on each step says where it happens.</span>
+  <h2 id="report-lab" hidden>Results</h2>
+  <div class="panel" id="report" hidden>
+    <div class="counts" id="counts"></div>
+    <div id="items"></div>
   </div>
-    <p class="note" id="steps_done" style="margin:0 0 14px"></p>
-    <ol class="steps">
-      <li data-step="0"><span class="dot">1</span>
-        <h3><label><input type="checkbox" class="step-box"> Inventory and pull</label>
-        <span class="where">This page / local GUI</span></h3>
-        <p>Collect your Kibana/Elastic exports. The locally-run GUI can also pull dashboards, rules, pipelines and watchers straight from the estate.</p></li>
-      <li data-step="1"><span class="dot">2</span>
-        <h3><label><input type="checkbox" class="step-box"> Convert everything</label>
-        <span class="where">This page</span></h3>
-        <p>Drop the lot on the Convert tab. Triage the results: OK ships as-is, REVIEW needs a look, MANUAL needs a person. MIGRATION_REPORT.md holds the detail.</p></li>
-      <li data-step="2"><span class="dot">3</span>
-        <h3><label><input type="checkbox" class="step-box"> Set mapping rules</label>
-        <span class="where">This page</span></h3>
-        <p>On the Mapping tab, route index patterns to data objects and rename fields, then re-convert until nothing falls back to defaults it shouldn't.</p></li>
-      <li data-step="3"><span class="dot">4</span>
-        <h3><label><input type="checkbox" class="step-box"> Storage and routing</label>
-        <span class="where">In Dynatrace</span></h3>
-        <p>Create Grail buckets from CUTOVER-PLAN.md so retention matches your ILM obligations, and set OpenPipeline routing for each log source.</p></li>
-      <li data-step="4"><span class="dot">5</span>
-        <h3><label><input type="checkbox" class="step-box"> Deploy pipelines</label>
-        <span class="where">Terraform / Dynatrace</span></h3>
-        <p>terraform apply each pipelines_tf/ module, or paste the .dpl stages into OpenPipeline. Fields must exist before anything downstream lights up.</p></li>
-      <li data-step="5"><span class="dot">6</span>
-        <h3><label><input type="checkbox" class="step-box"> Repoint shippers and dual-ship</label>
-        <span class="where">Your servers</span></h3>
-        <p>Apply the shippers/*.otel.yaml collector configs, or add the dual-ship output from CUTOVER-PLAN.md so both stacks receive logs during validation.</p></li>
-      <li data-step="6"><span class="dot">7</span>
-        <h3><label><input type="checkbox" class="step-box"> Verify fields and parity</label>
-        <span class="where">CLI</span></h3>
-        <p>Check each dashboard's .fields.md manifest, run e2d verify --data for empty tiles, and e2d parity to compare counts between the stacks.</p></li>
-      <li data-step="7"><span class="dot">8</span>
-        <h3><label><input type="checkbox" class="step-box"> Import dashboards and SLOs</label>
-        <span class="where">In Dynatrace / local GUI</span></h3>
-        <p>Upload dashboard JSON (or push from the locally-run GUI), then create SLOs from the slos/ definitions.</p></li>
-      <li data-step="8"><span class="dot">9</span>
-        <h3><label><input type="checkbox" class="step-box"> Backfill history where needed</label>
-        <span class="where">Local GUI / CLI</span></h3>
-        <p>For indexes whose history must live in Dynatrace, use the backfill panel or e2d backfill from the CLI. Query it by original_timestamp afterwards.</p></li>
-      <li data-step="9"><span class="dot">10</span>
-        <h3><label><input type="checkbox" class="step-box"> Alerts last, then cutover</label>
-        <span class="where">In Dynatrace</span></h3>
-        <p>Enable anomaly detectors once data flows and thresholds are reviewed. Mark Elasticsearch read-only per the plan, and decommission when retention lapses.</p></li>
-    </ol>
-    <button id="steps_reset" class="copy" style="margin-top:4px">Reset checklist</button>
-  </div>
-  </section>
-  <section class="view" id="view-mapping">
-  <h2>Mapping rules</h2>
-  <p class="lede">Route Elastic index patterns to Grail data objects and rename fields.
+
+
+  <details class="panel" id="mapping-card" style="margin-top:24px">
+    <summary class="h" style="cursor:pointer;font-weight:600">Mapping rules (applied to every conversion)</summary>
+    <p class="note">Route Elastic index patterns to Grail data objects and rename fields.
      Rules are saved in this browser and applied to every conversion automatically;
      a <code>mapping.config.json</code> dropped with your files takes precedence.
      Custom index rules are tried before the built-in defaults. Field references are lowercased automatically because Dynatrace
      normalizes attribute keys to lowercase at ingest; an explicit rename here
      overrides that.</p>
-  <div class="panel">
+
     <h3 class="map-h">Index patterns &#8594; data objects</h3>
     <table id="map_idx"></table>
     <button id="map_idx_add" class="copy" style="margin-top:8px">Add rule</button>
@@ -343,10 +294,12 @@
       <button id="map_copy" class="copy" style="padding:9px 16px;font-size:13px">Copy JSON</button>
       <span class="note" id="map_note"></span>
     </div>
-  </div>
-  </section>
-  <section class="view" id="view-reference">
-  <h2>What it converts</h2>
+  
+  </details>
+
+  <details class="panel" style="margin-top:16px">
+    <summary class="h" style="cursor:pointer;font-weight:600">What it converts, and limits</summary>
+    <p class="note" style="margin:12px 0 14px">This page runs entirely in your browser and never connects to anything: it converts, scores and lets you tune. The connected steps (live pull, backfill, verify, deploy) need the local tool: <code>pip install git+https://github.com/JD-DT94/elastic-to-dynatrace</code> then <code>e2d web</code>.</p>
   <div class="grid">
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -357,7 +310,6 @@
       <p>Lens incl. formulas, TSVB, legacy visualizations, saved searches, controls, Vega with
          an embedded ES query <b>&#8594; dashboard JSON</b> with DQL tiles, variables and
          series colours. Import in the Dashboards app.</p>
-      <button class="try" data-eg="dashboard">Try an example</button>
     </div>
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -366,7 +318,6 @@
       <h3>Queries</h3>
       <p>ES|QL, Query DSL, KQL and Lucene <b>&#8594; DQL</b>, linted offline before it
          reaches you.</p>
-      <button class="try" data-eg="query">Try an example</button>
     </div>
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -376,7 +327,6 @@
       <p>Logstash <code>.conf</code> and Elasticsearch ingest pipelines
          <b>&#8594; OpenPipeline stages</b>: a readable <code>.dpl</code> plus a deployable
          Terraform module.</p>
-      <button class="try" data-eg="pipeline">Try an example</button>
     </div>
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -386,7 +336,6 @@
       <h3>Alerts &amp; watchers</h3>
       <p>Watchers and Kibana alerting rules, incl. index-threshold and ES-query rules
          <b>&#8594; Davis anomaly detectors + Workflows</b> as Terraform.</p>
-      <button class="try" data-eg="alert">Try an example</button>
     </div>
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -395,7 +344,6 @@
       <h3>Transforms</h3>
       <p>Continuous transforms <b>&#8594; rollup DQL</b> with a migration note per
          transform.</p>
-      <button class="try" data-eg="transform">Try an example</button>
     </div>
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -408,7 +356,6 @@
       <h3>Cluster config</h3>
       <p>ILM policies, index templates and enrich policies <b>&#8594; written guides</b> for
          bucket retention, OpenPipeline routing and Grail lookups.</p>
-      <button class="try" data-eg="config">Try an example</button>
     </div>
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -420,7 +367,6 @@
       <p>Kibana SLO definitions <b>&#8594; DQL SLI queries</b> with the objective and
          window carried over, ready for the SLO app or API. APM indicators are flagged
          for the service-native path.</p>
-      <button class="try" data-eg="slo">Try an example</button>
     </div>
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -430,7 +376,6 @@
       <p>Filebeat configs <b>&#8594; OpenTelemetry Collector configs</b> shipping straight
          to Dynatrace; Metricbeat modules are mapped to OneAgent and Extensions Hub
          advice.</p>
-      <button class="try" data-eg="shipper">Try an example</button>
     </div>
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -440,7 +385,6 @@
       <h3>Synthetic monitors</h3>
       <p>Heartbeat HTTP monitors <b>&#8594; Dynatrace Synthetic monitor definitions</b>;
          TCP and ICMP checks are flagged for network availability monitors.</p>
-      <button class="try" data-eg="synthetic">Try an example</button>
     </div>
   </div>
   <p class="alsonote">Every run also writes <code>MIGRATION_REPORT.md</code> with a
@@ -473,7 +417,7 @@
     </ul>
   </div>
 
-  </section>
+  </details>
   <p class="foot">Powered by the <code>e2d</code> engine compiled to WebAssembly (Pyodide).
      Conversion, DQL linting, field audits and the migration report all run locally in this
      tab; this page makes no network requests with your data.</p>
@@ -580,8 +524,17 @@ s = run_migration('/work/in', '/work/out', config=cfg)
 shutil.make_archive('/work/converted', 'zip', '/work/out')
 from e2d.plan import build_plan
 from e2d.score import build_scorecard, scorecard_line
-json.dumps({'counts': s.counts(), 'items': [asdict(i) for i in s.items],
+items = []
+for i in s.items:
+    d = asdict(i)
+    try:
+        d['source_text'] = (Path('/work/in') / i.source).read_text(encoding='utf-8')[:20000]
+    except Exception:
+        d['source_text'] = ''
+    items.append(d)
+json.dumps({'counts': s.counts(), 'items': items,
             'skipped': s.skipped, 'secrets': s.secrets, 'plan': build_plan(s),
+            'unmatched': s.unmatched_indexes,
             'scorecard_line': scorecard_line(build_scorecard(s))})
 `);
     render(JSON.parse(out));
@@ -628,6 +581,7 @@ function render(r) {
     `<span class="ERROR tag">ERROR ${r.counts.ERROR}</span>`;
   let html = r.scorecard_line
     ? `<p class="note" style="margin:0 0 10px">${esc(r.scorecard_line)}</p>` : "";
+  html += tuneBlock(r);
   html += planBlock(r.plan);
   const CAT_ORDER = { dashboard: 0, query: 1, pipeline: 2, alert: 3, slo: 4,
                       shipper: 5, synthetic: 6, transform: 7, config: 8 };
@@ -663,6 +617,9 @@ function render(r) {
         html += `<details class="ngroup"><summary>${info.length} automatic adjustment(s), ` +
                 `no action needed</summary>${list(info)}</details>`;
     }
+    if (it.source_text)
+      html += `<details class="srcview"><summary class="note">original source</summary>
+               <pre>${esc(it.source_text)}</pre></details>`;
     html += `</div>`;
   }
   for (const s of r.skipped)
@@ -817,44 +774,7 @@ document.querySelectorAll("[data-eg]").forEach(b => b.addEventListener("click", 
   document.getElementById("drop").scrollIntoView({ behavior: "smooth" });
   convert();
 }));
-// ---- tab routing (logo = home) ------------------------------------------
 const LS = window.localStorage;
-const VIEWS = ["convert", "query", "process", "mapping", "reference"];
-function showView(name) {
-  if (!VIEWS.includes(name)) name = "convert";
-  for (const v of VIEWS) {
-    document.getElementById("view-" + v).classList.toggle("on", v === name);
-    document.querySelector(`[data-tab="${v}"]`).classList.toggle("on", v === name);
-  }
-}
-window.addEventListener("hashchange", () => showView(location.hash.slice(1)));
-showView(location.hash.slice(1));
-
-// ---- migration process checklist (saved in this browser) -----------------
-const STEPS_KEY = "e2d_steps";
-function stepsState() {
-  try { return JSON.parse(LS.getItem(STEPS_KEY)) || {}; } catch (e) { return {}; }
-}
-function paintSteps() {
-  const st = stepsState();
-  const items = document.querySelectorAll(".steps li");
-  let done = 0;
-  items.forEach(li => {
-    const on = !!st[li.dataset.step];
-    li.classList.toggle("done", on);
-    li.querySelector(".step-box").checked = on;
-    done += on;
-  });
-  $("steps_done").textContent = `${done} of ${items.length} steps done`;
-}
-document.querySelectorAll(".step-box").forEach(b => b.addEventListener("change", e => {
-  const st = stepsState();
-  st[e.target.closest("li").dataset.step] = e.target.checked;
-  LS.setItem(STEPS_KEY, JSON.stringify(st));
-  paintSteps();
-}));
-$("steps_reset").addEventListener("click", () => { LS.removeItem(STEPS_KEY); paintSteps(); });
-paintSteps();
 
 // ---- mapping rules builder ------------------------------------------------
 const MAP_KEY = "e2d_mapping";
@@ -905,7 +825,7 @@ $("map_idx_add").addEventListener("click", () => {
 $("map_fld_add").addEventListener("click", () => {
   const m = mapState(); m.field_map.push(["", ""]); saveMapState(m);
 });
-document.getElementById("view-mapping").addEventListener("input", e => {
+document.getElementById("mapping-card").addEventListener("input", e => {
   const i = +e.target.dataset.i; const m = mapState();
   if (e.target.classList.contains("mi-pat")) m.index_map[i].pattern = e.target.value;
   else if (e.target.classList.contains("mf-from")) m.field_map[i][0] = e.target.value;
@@ -914,12 +834,12 @@ document.getElementById("view-mapping").addEventListener("input", e => {
   LS.setItem(MAP_KEY, JSON.stringify(m));
   $("map_note").textContent = "Applied automatically to every conversion in this tab.";
 });
-document.getElementById("view-mapping").addEventListener("change", e => {
+document.getElementById("mapping-card").addEventListener("change", e => {
   if (!e.target.classList.contains("mi-obj")) return;
   const m = mapState(); m.index_map[+e.target.dataset.i].data_object = e.target.value;
   LS.setItem(MAP_KEY, JSON.stringify(m));
 });
-document.getElementById("view-mapping").addEventListener("click", e => {
+document.getElementById("mapping-card").addEventListener("click", e => {
   const i = +e.target.dataset.i; const m = mapState();
   if (e.target.classList.contains("mi-del")) { m.index_map.splice(i, 1); saveMapState(m); }
   if (e.target.classList.contains("mf-del")) { m.field_map.splice(i, 1); saveMapState(m); }
@@ -947,6 +867,34 @@ $("map_copy").addEventListener("click", async e => {
 });
 paintMap();
 
+// ---- tune the conversion from flagged results ----------------------------
+function tuneRegex(pat) {
+  const prefix = pat.split("*")[0].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return "^" + prefix;
+}
+function tuneBlock(d) {
+  const un = d.unmatched || [];
+  if (!un.length) return "";
+  let h = `<div class="gap" id="tune"><b>Tune the conversion.</b>
+    <span class="note">These index patterns had no mapping rule and fell back to
+    logs. Pick the right target and re-convert; the rules are saved for future
+    runs too.</span><table>`;
+  h += un.map(p => `<tr><td><code>${esc(p)}</code></td>
+    <td><select class="tune-obj" data-pat="${esc(p)}">${DATA_OBJECTS.map(o =>
+      `<option value="${o}"${o === "logs" ? " selected" : ""}>` +
+      `${o === "__metrics__" ? "metrics (timeseries)" : o}</option>`).join("")}</select></td></tr>`).join("");
+  h += `</table><button id="tune-apply" style="margin-top:10px">Save rules & re-convert</button></div>`;
+  return h;
+}
+
+$("report").addEventListener("click", e => {
+  if (e.target.id !== "tune-apply") return;
+  const m = mapState();
+  document.querySelectorAll(".tune-obj").forEach(s =>
+    m.index_map.push({ pattern: tuneRegex(s.dataset.pat), data_object: s.value }));
+  saveMapState(m);
+  convert();
+});
 </script>
 </body>
 </html>
