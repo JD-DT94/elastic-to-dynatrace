@@ -172,6 +172,10 @@
                       text-decoration-color:var(--faint); }
   .steps p { margin:0; font-size:13px; color:var(--mut); }
   .steps input[type="checkbox"] { width:15px; height:15px; accent-color:#27a56d; }
+  .where { font:600 10.5px ui-monospace,Consolas,monospace; letter-spacing:.08em;
+           text-transform:uppercase; color:var(--faint); border:1px solid var(--line2);
+           border-radius:6px; padding:2px 7px; margin-left:8px; white-space:nowrap; }
+  .steps h3 { display:flex; align-items:center; flex-wrap:wrap; gap:4px; }
   .map-h { margin:0 0 6px; font-size:14.5px; }
   #map_idx, #map_fld { width:100%; border-collapse:collapse; }
   #map_idx th, #map_fld th { text-align:left; color:var(--faint); font-weight:600;
@@ -261,40 +265,59 @@
   </section>
   <section class="view" id="view-process">
   <h2>Migration process</h2>
-  <p class="lede">The end-to-end flow this toolkit supports, in working order.
-     Ticks are saved in this browser.</p>
+  <p class="lede">The end-to-end flow of a migration, in working order. Each step says where it
+     happens. Ticks are saved in this browser.</p>
   <div class="panel">
+      <div class="gap" style="margin:0 0 16px">
+    <b>What this page can and cannot do.</b>
+    <span class="note">This page runs entirely in your browser and never connects
+    to anything, so it covers the conversion steps only. Steps marked
+    <span class="where">Local GUI</span> or <span class="where">CLI</span> need the
+    tool running on a machine that can reach your Elastic and Dynatrace:
+    <code>pip install git+https://github.com/JD-DT94/elastic-to-dynatrace</code>
+    then <code>e2d web</code>. The where-chip on each step says where it happens.</span>
+  </div>
     <p class="note" id="steps_done" style="margin:0 0 14px"></p>
     <ol class="steps">
       <li data-step="0"><span class="dot">1</span>
-        <h3><label><input type="checkbox" class="step-box"> Inventory and pull</label></h3>
-        <p>Collect your Kibana/Elastic exports. The local GUI (e2d web) can also pull dashboards, rules, pipelines and watchers straight from the estate.</p></li>
+        <h3><label><input type="checkbox" class="step-box"> Inventory and pull</label>
+        <span class="where">This page / local GUI</span></h3>
+        <p>Collect your Kibana/Elastic exports. The locally-run GUI can also pull dashboards, rules, pipelines and watchers straight from the estate.</p></li>
       <li data-step="1"><span class="dot">2</span>
-        <h3><label><input type="checkbox" class="step-box"> Convert everything</label></h3>
+        <h3><label><input type="checkbox" class="step-box"> Convert everything</label>
+        <span class="where">This page</span></h3>
         <p>Drop the lot on the Convert tab. Triage the results: OK ships as-is, REVIEW needs a look, MANUAL needs a person. MIGRATION_REPORT.md holds the detail.</p></li>
       <li data-step="2"><span class="dot">3</span>
-        <h3><label><input type="checkbox" class="step-box"> Set mapping rules</label></h3>
+        <h3><label><input type="checkbox" class="step-box"> Set mapping rules</label>
+        <span class="where">This page</span></h3>
         <p>On the Mapping tab, route index patterns to data objects and rename fields, then re-convert until nothing falls back to defaults it shouldn't.</p></li>
       <li data-step="3"><span class="dot">4</span>
-        <h3><label><input type="checkbox" class="step-box"> Storage and routing</label></h3>
+        <h3><label><input type="checkbox" class="step-box"> Storage and routing</label>
+        <span class="where">In Dynatrace</span></h3>
         <p>Create Grail buckets from CUTOVER-PLAN.md so retention matches your ILM obligations, and set OpenPipeline routing for each log source.</p></li>
       <li data-step="4"><span class="dot">5</span>
-        <h3><label><input type="checkbox" class="step-box"> Deploy pipelines</label></h3>
+        <h3><label><input type="checkbox" class="step-box"> Deploy pipelines</label>
+        <span class="where">Terraform / Dynatrace</span></h3>
         <p>terraform apply each pipelines_tf/ module, or paste the .dpl stages into OpenPipeline. Fields must exist before anything downstream lights up.</p></li>
       <li data-step="5"><span class="dot">6</span>
-        <h3><label><input type="checkbox" class="step-box"> Repoint shippers and dual-ship</label></h3>
+        <h3><label><input type="checkbox" class="step-box"> Repoint shippers and dual-ship</label>
+        <span class="where">Your servers</span></h3>
         <p>Apply the shippers/*.otel.yaml collector configs, or add the dual-ship output from CUTOVER-PLAN.md so both stacks receive logs during validation.</p></li>
       <li data-step="6"><span class="dot">7</span>
-        <h3><label><input type="checkbox" class="step-box"> Verify fields and parity</label></h3>
+        <h3><label><input type="checkbox" class="step-box"> Verify fields and parity</label>
+        <span class="where">CLI</span></h3>
         <p>Check each dashboard's .fields.md manifest, run e2d verify --data for empty tiles, and e2d parity to compare counts between the stacks.</p></li>
       <li data-step="7"><span class="dot">8</span>
-        <h3><label><input type="checkbox" class="step-box"> Import dashboards and SLOs</label></h3>
-        <p>Upload dashboard JSON (or push from the local GUI), then create SLOs from the slos/ definitions.</p></li>
+        <h3><label><input type="checkbox" class="step-box"> Import dashboards and SLOs</label>
+        <span class="where">In Dynatrace / local GUI</span></h3>
+        <p>Upload dashboard JSON (or push from the locally-run GUI), then create SLOs from the slos/ definitions.</p></li>
       <li data-step="8"><span class="dot">9</span>
-        <h3><label><input type="checkbox" class="step-box"> Backfill history where needed</label></h3>
-        <p>For indexes whose history must live in Dynatrace, use e2d backfill from the CLI or the local GUI. Query it by original_timestamp afterwards.</p></li>
+        <h3><label><input type="checkbox" class="step-box"> Backfill history where needed</label>
+        <span class="where">Local GUI / CLI</span></h3>
+        <p>For indexes whose history must live in Dynatrace, use the backfill panel or e2d backfill from the CLI. Query it by original_timestamp afterwards.</p></li>
       <li data-step="9"><span class="dot">10</span>
-        <h3><label><input type="checkbox" class="step-box"> Alerts last, then cutover</label></h3>
+        <h3><label><input type="checkbox" class="step-box"> Alerts last, then cutover</label>
+        <span class="where">In Dynatrace</span></h3>
         <p>Enable anomaly detectors once data flows and thresholds are reviewed. Mark Elasticsearch read-only per the plan, and decommission when retention lapses.</p></li>
     </ol>
     <button id="steps_reset" class="copy" style="margin-top:4px">Reset checklist</button>
