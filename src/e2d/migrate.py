@@ -39,6 +39,7 @@ class Item:
 
 @dataclass
 class MigrationSummary:
+    emit: str = "both"     # deployable-artifact flavour this run wrote: json | tf | both
     items: List[Item] = field(default_factory=list)
     skipped: List[str] = field(default_factory=list)       # "file — why it was skipped"
     secrets: List[str] = field(default_factory=list)        # "file: key" where a secret was seen
@@ -289,9 +290,9 @@ def _do_query(text: str, src: str, out: Path, kind: str, config: MappingConfig,
         summary.items.append(Item("query", src, worst, [f"queries/{base}.dql"], notes))
 
 
-def _do_pipeline(text: str, src: str, out: Path, kind: str, summary: MigrationSummary) -> None:
+def _do_pipeline(text: str, src: str, out: Path, kind: str, summary: MigrationSummary,
+                 emit: str = "both") -> None:
     from e2d.pipelines.translate import translate_pipeline, render_pipeline
-    from e2d.pipelines.tf import write_openpipeline_tf
     if kind == "logstash":
         from e2d.pipelines.logstash import parse_logstash
         res = translate_pipeline(parse_logstash(text))
@@ -306,27 +307,59 @@ def _do_pipeline(text: str, src: str, out: Path, kind: str, summary: MigrationSu
     pdir = out / "pipelines"
     pdir.mkdir(parents=True, exist_ok=True)
     (pdir / f"{base}.dpl").write_text(render_pipeline(Path(src).name, res), encoding="utf-8")
-    tf = write_openpipeline_tf(Path(src).name, res, str(out / "pipelines_tf" / base))
-    summary.items.append(Item("pipeline", src, _status(res.report),
-                              [f"pipelines/{base}.dpl", f"pipelines_tf/{base}/"],
-                              res.report.format_deduped()))
+    outs = [f"pipelines/{base}.dpl"]
+    notes = res.report.format_deduped()
+    if emit in ("json", "both"):
+        from e2d.pipelines.tf import generate_openpipeline_settings
+        body = generate_openpipeline_settings(Path(src).name, res)
+        (pdir / f"{base}.pipeline.json").write_text(
+            json.dumps(body, indent=2) + "\n", encoding="utf-8")
+        outs.append(f"pipelines/{base}.pipeline.json")
+        manual = sum(1 for s in res.stages if s.kind == "manual")
+        if manual:
+            notes.append(f"{manual} manual stage(s) are not in {base}.pipeline.json — "
+                         "see the .dpl file and remediation notes for what to add by hand.")
+    if emit in ("tf", "both"):
+        from e2d.pipelines.tf import write_openpipeline_tf
+        write_openpipeline_tf(Path(src).name, res, str(out / "pipelines_tf" / base))
+        outs.append(f"pipelines_tf/{base}/")
+    summary.items.append(Item("pipeline", src, _status(res.report), outs, notes))
 
 
-def _do_alert(text: str, src: str, out: Path, config: MappingConfig, summary: MigrationSummary) -> None:
+def _do_alert(text: str, src: str, out: Path, config: MappingConfig, summary: MigrationSummary,
+              emit: str = "both") -> None:
     from e2d.alerts import translate_alert, render_alert
-    from e2d.alerts.tf import render_detectors_tf, has_terraform
+    from e2d.alerts.tf import render_detectors_tf, has_terraform, needs_workflow
+    from e2d.alerts.metrics import render_metric_creation
     base = Path(src).stem
     res = translate_alert(text, config, name=base)
     adir = out / "alerts"
     adir.mkdir(parents=True, exist_ok=True)
     outs = [f"alerts/{base}.alert.md"]
+    notes = res.report.format_deduped()
     (adir / f"{base}.alert.md").write_text(render_alert(res.spec), encoding="utf-8")
     if res.spec.dql:
         (adir / f"{base}.dql").write_text(res.spec.dql + "\n", encoding="utf-8")
         outs.insert(0, f"alerts/{base}.dql")
-    if has_terraform(res.spec):
-        from e2d.alerts.tf import render_workflow_tf, needs_workflow
-        from e2d.alerts.metrics import render_metric_creation
+    if has_terraform(res.spec) and emit in ("json", "both"):
+        from e2d.sinks.dynatrace import detector_settings_value, ANOMALY_SCHEMA
+        body = [{"schemaId": ANOMALY_SCHEMA, "scope": "environment",
+                 "value": detector_settings_value(res.spec.name, det)}
+                for det in res.spec.detectors]
+        (adir / f"{base}.detectors.json").write_text(
+            json.dumps(body, indent=2) + "\n", encoding="utf-8")
+        outs.append(f"alerts/{base}.detectors.json")
+        if emit == "json":
+            metric_md = render_metric_creation(res.spec)
+            if metric_md:
+                (adir / f"{base}.metric_creation.md").write_text(metric_md, encoding="utf-8")
+                outs.append(f"alerts/{base}.metric_creation.md")
+            if needs_workflow(res.spec):
+                notes.append("Notification actions are not part of the JSON export — "
+                             "recreate them in the Workflows app (see the .alert.md guide) "
+                             "or re-run with the Terraform export for a deployable workflow.tf.")
+    if has_terraform(res.spec) and emit in ("tf", "both"):
+        from e2d.alerts.tf import render_workflow_tf
         tfdir = out / "alerts_tf" / base
         tfdir.mkdir(parents=True, exist_ok=True)
         (tfdir / "main.tf").write_text(render_detectors_tf(res.spec), encoding="utf-8")
@@ -336,8 +369,7 @@ def _do_alert(text: str, src: str, out: Path, config: MappingConfig, summary: Mi
             (tfdir / "metric_creation.md").write_text(metric_md, encoding="utf-8")
         if needs_workflow(res.spec):
             (tfdir / "workflow.tf").write_text(render_workflow_tf(res.spec), encoding="utf-8")
-    summary.items.append(Item("alert", src, _status(res.report), outs,
-                              res.report.format_deduped()))
+    summary.items.append(Item("alert", src, _status(res.report), outs, notes))
 
 
 def _do_beat(text: str, src: str, out: Path, kind: str, summary: MigrationSummary) -> None:
@@ -520,11 +552,18 @@ def _suggest_config(summary: MigrationSummary, out: Path) -> Optional[str]:
 # orchestration
 # --------------------------------------------------------------------------- #
 
-def run_migration(in_dir: str, out_dir: str, config: Optional[MappingConfig] = None) -> MigrationSummary:
+def run_migration(in_dir: str, out_dir: str, config: Optional[MappingConfig] = None,
+                  emit: str = "both") -> MigrationSummary:
+    """`emit` picks the deployable-artifact flavour for alerts and pipelines:
+    "json" (Settings-API upload files), "tf" (Terraform modules) or "both".
+    Anything else quietly falls back to "both" — a wrong value must never
+    abort a migration run."""
+    if emit not in ("json", "tf", "both"):
+        emit = "both"
     root = Path(in_dir)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    summary = MigrationSummary()
+    summary = MigrationSummary(emit=emit)
 
     # A mapping config dropped in with the export is applied to the whole run.
     inline_cfg = next((p for p in sorted(root.rglob("mapping.config*.json"))), None)
@@ -556,9 +595,9 @@ def run_migration(in_dir: str, out_dir: str, config: Optional[MappingConfig] = N
             elif kind in ("esql", "querydsl", "querytext"):
                 _do_query(text, rel, out, kind, config, summary)
             elif kind in ("logstash", "ingest"):
-                _do_pipeline(text, rel, out, kind, summary)
+                _do_pipeline(text, rel, out, kind, summary, emit)
             elif kind in ("watcher", "alerting_rule"):
-                _do_alert(text, rel, out, config, summary)
+                _do_alert(text, rel, out, config, summary, emit)
             elif kind == "slo":
                 _do_slo(text, rel, out, config, summary)
             elif kind in ("filebeat", "heartbeat", "metricbeat"):

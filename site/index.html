@@ -137,7 +137,7 @@
           padding:12px; font:13px/1.5 ui-monospace,Consolas,monospace; }
   .qbox:focus-visible { outline:2px solid var(--blue); outline-offset:1px; }
   .qrow { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:12px; }
-  .qrow select { background:rgba(0,0,0,.35); border:1px solid var(--line2); color:var(--ink);
+  .qrow select, .row select { background:rgba(0,0,0,.35); border:1px solid var(--line2); color:var(--ink);
                  border-radius:10px; padding:10px 12px; font:13px ui-monospace,Consolas,monospace; }
   .qhead { display:flex; align-items:center; gap:10px; margin:16px 0 6px; }
   .qhead .qlangtag { font-family:ui-monospace,Consolas,monospace; font-size:12px; color:var(--faint); }
@@ -247,6 +247,11 @@
       <button class="egchip" data-eg="config">ILM</button>
     </div>
     <div class="row">
+      <select id="emitsel" title="Deployable format written for alerts and pipelines">
+        <option value="both">Export JSON + Terraform</option>
+        <option value="json">JSON only &mdash; upload via API, no Terraform</option>
+        <option value="tf">Terraform only</option>
+      </select>
       <button id="convert" disabled>Convert</button>
       <button id="download" disabled>Download results (.zip)</button>
       <button id="reset" class="ghost">Reset</button>
@@ -331,8 +336,8 @@
         <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg></div>
       <h3>Ingest pipelines</h3>
       <p>Logstash <code>.conf</code> and Elasticsearch ingest pipelines
-         <b>&#8594; OpenPipeline stages</b>: a readable <code>.dpl</code> plus a deployable
-         Terraform module.</p>
+         <b>&#8594; OpenPipeline stages</b>: a readable <code>.dpl</code> plus your choice of
+         upload-ready Settings JSON or a Terraform module.</p>
     </div>
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -341,7 +346,8 @@
         <path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></div>
       <h3>Alerts &amp; watchers</h3>
       <p>Watchers and Kibana alerting rules, incl. index-threshold and ES-query rules
-         <b>&#8594; Davis anomaly detectors + Workflows</b> as Terraform.</p>
+         <b>&#8594; Davis anomaly detectors + Workflows</b> as upload-ready Settings JSON
+         or Terraform.</p>
     </div>
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -503,6 +509,8 @@ async function addFiles(files) {
 async function convert() {
   $("convert").disabled = true;
   setStatus("Converting…");
+  // whitelist the emit value — it is interpolated into the Python snippet below
+  const emit = ["json", "tf", "both"].includes($("emitsel").value) ? $("emitsel").value : "both";
   try {
     if (mapHasRules()) {
       const has = py.runPython(
@@ -526,7 +534,7 @@ if mc.exists():
 out = Path('/work/out')
 if out.exists():
     shutil.rmtree(out)
-s = run_migration('/work/in', '/work/out', config=cfg)
+s = run_migration('/work/in', '/work/out', config=cfg, emit='${emit}')
 shutil.make_archive('/work/converted', 'zip', '/work/out')
 from e2d.plan import build_plan
 from e2d.score import build_scorecard, scorecard_line
@@ -781,6 +789,13 @@ document.querySelectorAll("[data-eg]").forEach(b => b.addEventListener("click", 
   convert();
 }));
 const LS = window.localStorage;
+
+// alerts/pipelines export format (JSON vs Terraform) — remembered per browser
+{
+  const em = LS.getItem("e2d_emit");
+  if (em) $("emitsel").value = em;
+  $("emitsel").addEventListener("change", () => LS.setItem("e2d_emit", $("emitsel").value));
+}
 
 // ---- mapping rules builder ------------------------------------------------
 const MAP_KEY = "e2d_mapping";

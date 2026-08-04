@@ -65,11 +65,21 @@ def build_plan(summary) -> dict:
          "how long it lives. Settle them before logs start flowing.",
          "Work through each guide under config_advice/.",
          by_cat.get("config", []))
+    emit = getattr(summary, "emit", "both")
+    pipeline_how = {
+        "json": "POST each pipelines/<name>.pipeline.json as the body of "
+                "{env}/api/v2/settings/objects, or paste the .dpl stages into "
+                "OpenPipeline in the UI.",
+        "tf": "terraform apply each pipelines_tf/<name>/ folder, or paste the "
+              ".dpl stages into OpenPipeline in the UI.",
+        "both": "terraform apply each pipelines_tf/<name>/ folder (or POST the "
+                ".pipeline.json settings body), or paste the .dpl stages into "
+                "OpenPipeline in the UI.",
+    }[emit]
     step("Deploy ingest pipelines",
          "Pipelines create the custom fields everything downstream queries; "
          "dashboards and alerts stay empty until these run.",
-         "terraform apply each pipelines_tf/<name>/ folder, or paste the .dpl "
-         "stages into OpenPipeline in the UI.",
+         pipeline_how,
          by_cat.get("pipeline", []))
     step("Verify fields are ingested",
          "A tile whose field is missing renders empty with no error. This step "
@@ -104,11 +114,20 @@ def build_plan(summary) -> dict:
          "Rollup queries only make sense against live data.",
          "Follow each transforms/*.transform.md note.",
          by_cat.get("transform", []))
+    alert_how = {
+        "json": "POST each alerts/<name>.detectors.json as the body of "
+                "{env}/api/v2/settings/objects, or push detectors from the "
+                "deploy panel; keep them disabled until validated.",
+        "tf": "terraform apply each alerts_tf/<name>/ folder, or push detectors "
+              "from the deploy panel; keep them disabled until validated.",
+        "both": "terraform apply each alerts_tf/<name>/ folder (or POST the "
+                ".detectors.json settings body), or push detectors from the "
+                "deploy panel; keep them disabled until validated.",
+    }[emit]
     step("Enable alerting last",
          "Detectors evaluate live data; enabling them before data flows just "
          "fires false alarms. Review each threshold and window first.",
-         "terraform apply each alerts_tf/<name>/ folder, or push detectors from "
-         "the deploy panel; keep them disabled until validated.",
+         alert_how,
          by_cat.get("alert", []))
     if getattr(summary, "metrics_advisories", 0):
         steps.append({"title": "Optimise: extract metrics",

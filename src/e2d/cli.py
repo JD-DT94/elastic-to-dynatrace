@@ -223,7 +223,7 @@ def cmd_migrate(args: argparse.Namespace) -> int:
     if not Path(args.input).is_dir():
         print(f"error: {args.input} is not a directory", file=sys.stderr)
         return 2
-    summary = run_migration(args.input, args.output, config)
+    summary = run_migration(args.input, args.output, config, emit=args.emit)
     c = summary.counts()
     print(f"\nMigrated {len(summary.items)} item(s): "
           f"{c['OK']} OK, {c['REVIEW']} REVIEW, {c['MANUAL']} MANUAL, {c['ERROR']} ERROR  "
@@ -400,6 +400,9 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("input", help="Folder containing Elastic exports (.ndjson/.esql/.conf/.json/.txt)")
     m.add_argument("-o", "--output", required=True, help="Output directory for converted artifacts + report")
     m.add_argument("--config", help="Mapping config JSON")
+    m.add_argument("--emit", choices=["json", "tf", "both"], default="both",
+                   help="Deployable format for alerts/pipelines: 'json' = Settings-API upload "
+                        "files (no Terraform needed), 'tf' = Terraform modules, 'both' (default)")
     m.add_argument("--strict", action="store_true", help="Exit non-zero if any item is MANUAL/ERROR")
     m.add_argument("-v", "--verbose", action="store_true", help="(reserved) show INFO notes")
     m.set_defaults(func=cmd_migrate)

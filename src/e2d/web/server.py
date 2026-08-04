@@ -150,9 +150,9 @@ class Sessions:
 
     # -- migration ---------------------------------------------------------- #
 
-    def migrate(self, sid: str) -> dict:
+    def migrate(self, sid: str, emit: str = "both") -> dict:
         dirs = self._dirs(sid)
-        summary = run_migration(str(dirs["in"]), str(dirs["out"]), self.config)
+        summary = run_migration(str(dirs["in"]), str(dirs["out"]), self.config, emit=emit)
         # bundle the outputs for download
         archive = dirs["out"].parent / "converted.zip"
         with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -408,7 +408,8 @@ def make_handler(sessions: Sessions):
                     self._json(200, {"files": count})
                 elif self.path == "/migrate":
                     sid = self.headers.get("X-Session", "")
-                    self._json(200, sessions.migrate(sid))
+                    body = json.loads(self._read_body() or b"{}")
+                    self._json(200, sessions.migrate(sid, body.get("emit", "both")))
                 elif self.path == "/connect":
                     sid = self.headers.get("X-Session", "")
                     sessions.connect(sid, json.loads(self._read_body() or b"{}"))
@@ -738,7 +739,14 @@ PAGE = r"""<!DOCTYPE html>
       <button class="egchip" data-eg="config">ILM</button>
     </div>
     <ul class="files" id="filelist"></ul>
-    <button id="go" disabled>Convert</button>
+    <div class="conn">
+      <select id="emitsel" title="Deployable format written for alerts and pipelines">
+        <option value="both">Export JSON + Terraform</option>
+        <option value="json">JSON only &mdash; upload via API, no Terraform</option>
+        <option value="tf">Terraform only</option>
+      </select>
+      <button id="go" disabled>Convert</button>
+    </div>
     <div class="err-box hide" id="err"></div>
   </div>
 
@@ -855,8 +863,8 @@ PAGE = r"""<!DOCTYPE html>
         <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg></div>
       <h3>Ingest pipelines</h3>
       <p>Logstash <code>.conf</code> and Elasticsearch ingest pipelines
-         <b>&#8594; OpenPipeline stages</b>: a readable <code>.dpl</code> plus a deployable
-         Terraform module.</p>
+         <b>&#8594; OpenPipeline stages</b>: a readable <code>.dpl</code> plus your choice of
+         upload-ready Settings JSON or a Terraform module.</p>
     </div>
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -865,8 +873,8 @@ PAGE = r"""<!DOCTYPE html>
         <path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></div>
       <h3>Alerts &amp; watchers</h3>
       <p>Watchers and Kibana alerting rules, incl. index-threshold and ES-query rules
-         <b>&#8594; Davis anomaly detectors + Workflows</b> as Terraform. Detectors can also
-         be pushed from here.</p>
+         <b>&#8594; Davis anomaly detectors + Workflows</b> as upload-ready Settings JSON
+         or Terraform. Detectors can also be pushed from here.</p>
     </div>
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -961,6 +969,10 @@ function showFiles() {
 }
 function addFiles(list) { chosen = chosen.concat([...list]); showFiles(); }
 
+// alerts/pipelines export format (JSON vs Terraform) — remembered per browser
+const emitSel = $("#emitsel");
+const emitBody = () => JSON.stringify({ emit: emitSel.value });
+
 drop.addEventListener("click", () => picker.click());
 picker.addEventListener("change", e => addFiles(e.target.files));
 ["dragover","dragenter"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("hot"); }));
@@ -991,6 +1003,9 @@ window.addEventListener("DOMContentLoaded", () => {
     const save = () => LS.setItem("e2d_" + id, el.value);
     el.addEventListener("input", save); el.addEventListener("change", save);
   });
+  const em = LS.getItem("e2d_emit");
+  if (em) emitSel.value = em;
+  emitSel.addEventListener("change", () => LS.setItem("e2d_emit", emitSel.value));
 });
 
 go.addEventListener("click", async () => {
@@ -1005,7 +1020,8 @@ go.addEventListener("click", async () => {
       await post("/upload", await f.arrayBuffer(),
                  { "X-Session": session, "X-Filename": f.name });
     }
-    const data = await post("/migrate", "", { "X-Session": session });
+    const data = await post("/migrate", emitBody(),
+                            { "X-Session": session, "Content-Type": "application/json" });
     render(data);
   } catch (e) {
     err.textContent = "Something went wrong: " + e.message;
@@ -1061,7 +1077,8 @@ async function pullAndConvert() {
     await post("/pull", JSON.stringify(sel), { "X-Session": pulledSession, "Content-Type": "application/json" });
     btn.textContent = "Converting…";
     currentSession = pulledSession;
-    const data = await post("/migrate", "", { "X-Session": pulledSession });
+    const data = await post("/migrate", emitBody(),
+                            { "X-Session": pulledSession, "Content-Type": "application/json" });
     render(data);
   } catch (e) {
     $("#discovery").innerHTML += `<p class="err-box">Pull failed: ${esc(e.message)}</p>`;

@@ -94,6 +94,46 @@ def generate_openpipeline_tf(name: str, res: PipelineResult, resource_name: str 
     return {"main.tf": _MAIN_TF, "pipeline.tf": "\n".join(body)}
 
 
+_SETTINGS_SCHEMA = "builtin:openpipeline.logs.pipelines"
+
+
+def generate_openpipeline_settings(name: str, res: PipelineResult) -> List[dict]:
+    """Settings-API request body for the same pipeline — the no-Terraform path.
+
+    One object of schema `builtin:openpipeline.logs.pipelines` (the schema that
+    replaced the deprecated OpenPipeline configurations API); upload the file
+    verbatim as the body of `POST {env}/api/v2/settings/objects`. The customId
+    is suffixed `_api` so a Terraform deploy of the same pipeline never fights
+    over the identifier. Manual/note stages have no JSON representation — the
+    caller reports them so they are not silently lost.
+    """
+    rn = _ident(Path(name).stem, "logs")
+    processors: List[dict] = []
+    counter = 0
+    for stage in res.stages:
+        if stage.kind not in ("dql", "drop"):
+            continue
+        counter += 1
+        desc = stage.description or (stage.dql if stage.kind == "dql" else "drop matching records")
+        proc = {
+            "id": f"p{counter:03d}_{rn}"[:60],
+            "type": "drop" if stage.kind == "drop" else "dql",
+            "description": desc[:120],
+            "enabled": stage.enabled,
+            "matcher": stage.matcher,
+        }
+        if stage.kind == "dql":
+            proc["dql"] = {"script": stage.dql}
+        processors.append(proc)
+    value = {
+        "customId": (_ident(Path(name).stem, "pipeline") + "_api")[:60],
+        "displayName": Path(name).stem[:100],
+        "metadataList": [],
+        "processing": {"processors": processors},
+    }
+    return [{"schemaId": _SETTINGS_SCHEMA, "scope": "environment", "value": value}]
+
+
 def write_openpipeline_tf(name: str, res: PipelineResult, out_dir: str) -> Dict[str, object]:
     files = generate_openpipeline_tf(name, res)
     d = Path(out_dir)
