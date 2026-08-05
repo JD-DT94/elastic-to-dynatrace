@@ -41,9 +41,9 @@ def test_default_emits_both_formats(tmp_path):
     s, out = _run(tmp_path)
     assert s.emit == "both"
     assert (out / "alerts" / "watcher.detectors.json").exists()
-    assert (out / "alerts_tf" / "watcher" / "main.tf").exists()
+    assert (out / "terraform" / "detectors.tf").exists()
     assert (out / "pipelines" / "web.pipeline.json").exists()
-    assert (out / "pipelines_tf" / "web" / "pipeline.tf").exists()
+    assert (out / "terraform" / "pipelines.tf").exists()
 
 
 def test_detectors_json_is_settings_api_body(tmp_path):
@@ -85,8 +85,7 @@ def test_emit_json_skips_terraform(tmp_path):
     assert s.emit == "json"
     assert (out / "alerts" / "watcher.detectors.json").exists()
     assert (out / "pipelines" / "web.pipeline.json").exists()
-    assert not (out / "alerts_tf").exists()
-    assert not (out / "pipelines_tf").exists()
+    assert not (out / "terraform").exists()
     # the rollout plan tells the user to POST the settings bodies, not terraform apply
     from e2d.plan import build_plan
     plan = build_plan(s)
@@ -102,12 +101,12 @@ def test_emit_tf_skips_json(tmp_path):
     assert s.emit == "tf"
     assert not (out / "alerts" / "watcher.detectors.json").exists()
     assert not (out / "pipelines" / "web.pipeline.json").exists()
-    assert (out / "alerts_tf" / "watcher" / "main.tf").exists()
-    assert (out / "pipelines_tf" / "web" / "pipeline.tf").exists()
+    assert (out / "terraform" / "detectors.tf").exists()
+    assert (out / "terraform" / "pipelines.tf").exists()
 
 
 def test_unknown_emit_value_falls_back_to_both(tmp_path):
     s, out = _run(tmp_path, emit="yaml")
     assert s.emit == "both"
-    assert (out / "alerts_tf").exists()
+    assert (out / "terraform").exists()
     assert (out / "pipelines" / "web.pipeline.json").exists()

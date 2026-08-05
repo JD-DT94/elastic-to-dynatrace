@@ -80,11 +80,10 @@ def build_plan(summary) -> dict:
         "json": "POST each pipelines/<name>.pipeline.json as the body of "
                 "{env}/api/v2/settings/objects, or paste the .dpl stages into "
                 "OpenPipeline in the UI.",
-        "tf": "terraform apply each pipelines_tf/<name>/ folder, or paste the "
-              ".dpl stages into OpenPipeline in the UI.",
-        "both": "terraform apply each pipelines_tf/<name>/ folder (or POST the "
-                ".pipeline.json settings body), or paste the .dpl stages into "
-                "OpenPipeline in the UI.",
+        "tf": "Apply the terraform/ module (see its README for wiring it into an "
+              "existing repo), or paste the .dpl stages into OpenPipeline in the UI.",
+        "both": "Apply the terraform/ module, or POST each .pipeline.json settings "
+                "body, or paste the .dpl stages into OpenPipeline in the UI.",
     }[emit]
     step("Deploy ingest pipelines",
          "Pipelines create the custom fields everything downstream queries; "
@@ -128,11 +127,11 @@ def build_plan(summary) -> dict:
         "json": "POST each alerts/<name>.detectors.json as the body of "
                 "{env}/api/v2/settings/objects, or push detectors from the "
                 "deploy panel; keep them disabled until validated.",
-        "tf": "terraform apply each alerts_tf/<name>/ folder, or push detectors "
-              "from the deploy panel; keep them disabled until validated.",
-        "both": "terraform apply each alerts_tf/<name>/ folder (or POST the "
-                ".detectors.json settings body), or push detectors from the "
-                "deploy panel; keep them disabled until validated.",
+        "tf": "Apply the terraform/ module — detectors are created disabled until "
+              "you set detectors_enabled = true for a validated wave.",
+        "both": "Apply the terraform/ module (detectors stay disabled until "
+                "detectors_enabled = true), or POST the .detectors.json settings "
+                "body, or push from the deploy panel.",
     }[emit]
     step("Enable alerting last",
          "Detectors evaluate live data; enabling them before data flows just "

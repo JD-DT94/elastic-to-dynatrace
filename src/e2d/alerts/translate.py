@@ -592,7 +592,7 @@ def render_alert(spec: AlertSpec) -> str:
     L.append("## How to build it in Dynatrace")
     L.append("")
     L.append("- Deploy the **Davis anomaly detector(s)** above with `e2d alert --terraform` (or "
-             "`migrate` writes them under `alerts_tf/`). They run the DQL and fire on the threshold.")
+             "`migrate` writes them into the `terraform/` module). They run the DQL and fire on the threshold.")
     if spec.target == TARGET_WORKFLOW:
         L.append("- This alert also needs a **Workflow** (chained inputs / per-action conditions / "
                  "scripted logic): a scheduled DQL task + notification task(s); map webhook auth to a "

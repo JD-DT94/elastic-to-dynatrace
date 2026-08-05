@@ -170,10 +170,19 @@ CATALOGUE: List[Item] = [
          "Not a 1:1 migration. Define capture rules and metric transformations from "
          "scratch, driven by what the business actually needs to see.",
          ("appd_infopoints",)),
-    Item("Data collectors (method argument and return value capture)",
-         "Request attributes, or OpenTelemetry span attributes",
-         "transactions", ASSISTED, 7,
-         "Configured per service. The capture intent ports across; the mechanism does not.",
+    Item("HTTP data collectors (parameters, headers, cookies, session attributes)",
+         "Request attributes",
+         "transactions", AUTOMATIC, 7,
+         "Converted directly. Cookies become a `Cookie` header capture with a value-extractor "
+         "regex, since Dynatrace has no cookie source.",
+         ("appd_datacollectors",)),
+    Item("Method invocation data collectors (argument / return value capture)",
+         "Request attributes with a method rule",
+         "transactions", REBUILD, 7,
+         "Inventoried, not generated. A Dynatrace method rule also needs the return type and "
+         "visibility, which the AppD export does not carry, and it matches a process group "
+         "where AppD matched a tier — a rule built from guesses applies cleanly and captures "
+         "nothing. Build these in the UI where the class browser confirms the signature.",
          ("appd_datacollectors",)),
     Item("Transaction detection rules and custom match rules",
          "Automatic service detection, plus custom services where needed",

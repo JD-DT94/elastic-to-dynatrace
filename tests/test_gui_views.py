@@ -102,12 +102,43 @@ def test_deployment_instructions_cover_all_three_routes(name):
     # every artifact class the converter can emit needs a documented route out
     assert "/platform/document/v1/documents" in html      # dashboards
     assert "/api/v2/settings/objects" in html             # detectors, pipelines, windows
-    assert "terraform apply" in html                      # tf modules
+    # the Terraform route is a child module, and the instructions must show the
+    # module block rather than "cd in and apply" — applying a child module directly
+    # fails, and that is the first thing someone tries
+    assert 'module "migrated"' in html
+    assert "terraform init" in html
+    assert "example-root" in html
     # and the scopes, because a 403 with no scope named is the usual first failure
     assert "document:documents:write" in html
     assert "settings:objects:write" in html
     # OpenPipeline needs OAuth, not an API token — the easiest thing to get wrong
     assert "DT_CLIENT_ID" in html and "openpipeline:configurations:read" in html
+    # detectors ship off; if that ever silently changes, the page must change too
+    assert "detectors_enabled" in html
+
+
+@pytest.mark.parametrize("name", sorted(PAGES))
+def test_how_it_works_explains_the_pipeline_and_the_boundary(name):
+    html = PAGES[name]
+    assert 'id="how-card"' in html
+    # the five stages, so someone can reason about where their artifact went
+    for stage in ("Identify", "Translate", "Lint", "Report", "Deploy"):
+        assert f"<b>{stage}.</b>" in html, stage
+    # the four honest categories, including the one that saves the most time
+    assert "Nothing to migrate" in html
+    assert "Rebuild by hand" in html
+    # and the refusals, which are the tool's actual argument
+    for refusal in ("Guess a metric", "Invent a threshold", "Scope an entity",
+                    "Turn your alerts on", "Move history"):
+        assert refusal in html, refusal
+
+
+@pytest.mark.parametrize("name", sorted(PAGES))
+def test_examples_exist_for_every_appd_converter(name):
+    html = PAGES[name]
+    for eg in ("appdrule", "appddash", "appdinv", "appdcollector", "appdsched"):
+        assert f'data-eg="{eg}"' in html, eg
+        assert f"{eg}: {{ file:" in html, f"{eg} has a chip but no example payload"
 
 
 @pytest.mark.parametrize("name", sorted(PAGES))

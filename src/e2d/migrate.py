@@ -13,7 +13,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from e2d.config import MappingConfig
 from e2d.report import Report, Severity
@@ -50,7 +50,7 @@ PRODUCT_OF_KIND = {
 }
 
 # AppD kinds handled by the instrumentation guidance path.
-_APPD_INSTRUMENTATION = ("appd_infopoints", "appd_datacollectors", "appd_txn_rules",
+_APPD_INSTRUMENTATION = ("appd_infopoints", "appd_txn_rules",
                          "appd_service_endpoints", "appd_backends", "appd_db_collectors")
 
 
@@ -92,6 +92,9 @@ class MigrationSummary:
     appd_waves: int = 0           # rollout waves the onboarding plan produced
     appd_kinds: List[str] = field(default_factory=list)          # AppD artifact kinds seen
     appd_rule_classes: Dict[str, int] = field(default_factory=dict)  # converted/covered/manual
+    # One Terraform child module accumulated across the whole run, so the output
+    # is a single importable module rather than a root module per artifact.
+    tf_module: Any = None
 
     @property
     def products(self) -> List[str]:
@@ -408,10 +411,10 @@ def _do_pipeline(text: str, src: str, out: Path, kind: str, summary: MigrationSu
         if manual:
             notes.append(f"{manual} manual stage(s) are not in {base}.pipeline.json — "
                          "see the .dpl file and remediation notes for what to add by hand.")
-    if emit in ("tf", "both"):
-        from e2d.pipelines.tf import write_openpipeline_tf
-        write_openpipeline_tf(Path(src).name, res, str(out / "pipelines_tf" / base))
-        outs.append(f"pipelines_tf/{base}/")
+    if emit in ("tf", "both") and summary.tf_module is not None:
+        from e2d.terraform.resources import pipeline_resource
+        summary.tf_module.add(pipeline_resource(Path(src).name, res))
+        outs.append("terraform/")
     summary.items.append(Item("pipeline", src, _status(res.report), outs, notes))
 
 
@@ -447,17 +450,17 @@ def _do_alert(text: str, src: str, out: Path, config: MappingConfig, summary: Mi
                 notes.append("Notification actions are not part of the JSON export — "
                              "recreate them in the Workflows app (see the .alert.md guide) "
                              "or re-run with the Terraform export for a deployable workflow.tf.")
-    if has_terraform(res.spec) and emit in ("tf", "both"):
-        from e2d.alerts.tf import render_workflow_tf
-        tfdir = out / "alerts_tf" / base
-        tfdir.mkdir(parents=True, exist_ok=True)
-        (tfdir / "main.tf").write_text(render_detectors_tf(res.spec), encoding="utf-8")
-        outs.append(f"alerts_tf/{base}/")
+    if has_terraform(res.spec) and emit in ("tf", "both") and summary.tf_module is not None:
+        from e2d.terraform.resources import detector_resource, workflow_resource
+        for i, det in enumerate(res.spec.detectors):
+            summary.tf_module.add(detector_resource(res.spec, det, i))
+        if needs_workflow(res.spec):
+            summary.tf_module.add(workflow_resource(res.spec))
+        outs.append("terraform/")
         metric_md = render_metric_creation(res.spec)
         if metric_md:
-            (tfdir / "metric_creation.md").write_text(metric_md, encoding="utf-8")
-        if needs_workflow(res.spec):
-            (tfdir / "workflow.tf").write_text(render_workflow_tf(res.spec), encoding="utf-8")
+            (adir / f"{base}.metric_creation.md").write_text(metric_md, encoding="utf-8")
+            outs.append(f"alerts/{base}.metric_creation.md")
     summary.items.append(Item("alert", src, _status(res.report), outs, notes))
 
 
@@ -509,11 +512,12 @@ def _do_appd_health_rule(text: str, src: str, out: Path, config: MappingConfig,
                 {"schemaId": ANOMALY_SCHEMA, "scope": "environment",
                  "value": detector_settings_value(res.spec.name, det)}
                 for det in res.spec.detectors]
-        if emit in ("tf", "both"):
-            tfdir = out / "alerts_tf" / stem
-            tfdir.mkdir(parents=True, exist_ok=True)
-            (tfdir / "main.tf").write_text(render_detectors_tf(res.spec), encoding="utf-8")
-            outs.append(f"alerts_tf/{stem}/")
+        if emit in ("tf", "both") and summary.tf_module is not None:
+            from e2d.terraform.resources import detector_resource
+            for di, det in enumerate(res.spec.detectors):
+                summary.tf_module.add(detector_resource(res.spec, det, di))
+            if "terraform/" not in outs:
+                outs.append("terraform/")
 
     if settings_bodies:
         (adir / f"{base}.detectors.json").write_text(
@@ -592,6 +596,35 @@ def _do_appd_inventory(text: str, src: str, out: Path, summary: MigrationSummary
             "OneAgent installs once per host and instruments every process on it, so the "
             f"rollout is {inv.host_count} installs across {len(waves)} wave(s).")
     summary.items.append(Item("onboarding", src, _status(res.report), outs, notes))
+
+
+def _do_appd_data_collectors(text: str, src: str, out: Path, summary: MigrationSummary,
+                             emit: str = "both") -> None:
+    """AppD data collectors -> Dynatrace request attributes."""
+    from e2d.appd.request_attributes import (translate_data_collectors,
+                                             render_request_attributes)
+
+    res = translate_data_collectors(text)
+    rdir = out / "request_attributes"
+    rdir.mkdir(parents=True, exist_ok=True)
+    base = Path(src).stem
+    (rdir / f"{base}.md").write_text(render_request_attributes(res, source=src),
+                                     encoding="utf-8")
+    outs = [f"request_attributes/{base}.md"]
+
+    if res.attributes and emit in ("json", "both"):
+        (rdir / f"{base}.attributes.json").write_text(
+            json.dumps([a.to_api() for a in res.attributes], indent=2) + "\n",
+            encoding="utf-8")
+        outs.append(f"request_attributes/{base}.attributes.json")
+    if res.attributes and emit in ("tf", "both") and summary.tf_module is not None:
+        from e2d.terraform.resources import request_attribute_resource
+        for attr in res.attributes:
+            summary.tf_module.add(request_attribute_resource(attr))
+        outs.append("terraform/")
+
+    summary.items.append(Item("request_attribute", src, _status(res.report), outs,
+                              res.report.format_deduped()))
 
 
 def _do_appd_instrumentation(text: str, src: str, out: Path, kind: str,
@@ -839,6 +872,9 @@ def run_migration(in_dir: str, out_dir: str, config: Optional[MappingConfig] = N
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     summary = MigrationSummary(emit=emit)
+    if emit in ("tf", "both"):
+        from e2d.terraform.module import TerraformModule
+        summary.tf_module = TerraformModule()
 
     # A mapping config dropped in with the export is applied to the whole run.
     inline_cfg = next((p for p in sorted(root.rglob("mapping.config*.json"))), None)
@@ -893,6 +929,8 @@ def run_migration(in_dir: str, out_dir: str, config: Optional[MappingConfig] = N
                 _do_appd_inventory(text, rel, out, summary)
             elif kind == "appd_policies":
                 _do_appd_policies(text, rel, out, summary)
+            elif kind == "appd_datacollectors":
+                _do_appd_data_collectors(text, rel, out, summary, emit)
             elif kind in _APPD_INSTRUMENTATION:
                 _do_appd_instrumentation(text, rel, out, kind, summary)
             elif kind == "appd_schedules":
@@ -923,6 +961,12 @@ def run_migration(in_dir: str, out_dir: str, config: Optional[MappingConfig] = N
         (out / "CUTOVER-PLAN.md").write_text(
             render_cutover_plan(summary.ilm_policies, summary.template_patterns),
             encoding="utf-8")
+
+    # One Terraform child module for the whole run: a single directory that
+    # drops into an existing repository, rather than a root module per artifact
+    # (several of those merged into one config fail to init).
+    if summary.tf_module is not None and summary.tf_module.resources:
+        summary.tf_module.write(str(out / "terraform"))
 
     # An AppD run always gets the phased plan and the full catalogue, not just
     # the artifacts that happened to convert — the items needing no migration

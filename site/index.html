@@ -167,6 +167,20 @@
   .feat p b { color:#9fc3f5; font-weight:600; }
   .alsonote { color:var(--mut); font-size:13.5px; margin-top:14px; }
 
+  /* how-it-works stages */
+  .stages { counter-reset:stage; list-style:none; margin:14px 0 4px; padding:0; }
+  .stages li { counter-increment:stage; position:relative; padding:0 0 16px 40px;
+               color:var(--mut); font-size:13.5px; line-height:1.62; }
+  .stages li:last-child { padding-bottom:4px; }
+  .stages li::before { content:counter(stage); position:absolute; left:0; top:1px;
+                       width:24px; height:24px; border-radius:8px; display:grid;
+                       place-items:center; font:700 11.5px ui-monospace,Consolas,monospace;
+                       background:rgba(77,141,255,.14); color:#7cc4ff; }
+  .stages li::after { content:""; position:absolute; left:11.5px; top:29px; bottom:4px;
+                      width:1px; background:var(--line); }
+  .stages li:last-child::after { display:none; }
+  .stages b { color:var(--ink); font-weight:620; }
+
   /* how-to-deploy panel */
   .howto { list-style:none; margin:8px 0 18px; padding:0; }
   .howto li { position:relative; padding:0 0 0 18px; margin-bottom:9px;
@@ -343,6 +357,8 @@
       <button class="egchip" data-eg="appdrule">health rules</button>
       <button class="egchip" data-eg="appddash">dashboard</button>
       <button class="egchip" data-eg="appdinv">node inventory</button>
+      <button class="egchip" data-eg="appdcollector">data collectors</button>
+      <button class="egchip" data-eg="appdsched">schedules</button>
     </div>
   </div>
 
@@ -402,6 +418,60 @@
   </div>
 
 
+  <details class="panel v v-conv" id="how-card" style="margin-top:16px">
+    <summary class="h">How it works, and what it will not do</summary>
+
+    <ol class="stages">
+      <li><b>Identify.</b> Every file is classified by its own contents, not its name or
+        the tab you are on. A mixed drop of Elastic and AppDynamics exports sorts itself
+        out; anything unrecognised is listed as skipped with a reason, never dropped
+        silently.</li>
+      <li><b>Translate.</b> Each artifact is lowered into a shared, product-neutral model
+        &mdash; filters, aggregations, alert specs &mdash; and then emitted as DQL and
+        Dynatrace configuration. That shared middle is why Elastic and AppDynamics produce
+        consistent output rather than two dialects.</li>
+      <li><b>Lint.</b> Generated DQL is checked offline against the mistakes that fail
+        quietly: scalar maths on timeseries arrays, the deprecated entity namespace,
+        percentiles missing a rollup. Findings land in the report next to the artifact.</li>
+      <li><b>Report.</b> A scorecard, a deployment order, and per-artifact notes saying
+        exactly what a human still has to decide.</li>
+      <li><b>Deploy.</b> Upload-ready JSON, an importable Terraform module, or a direct
+        push &mdash; your choice, per run.</li>
+    </ol>
+
+    <h3 class="map-h">Four honest categories</h3>
+    <p class="note">Everything the tool touches falls into one of these, and the report
+       says which. The fourth is usually the largest and the most valuable.</p>
+    <ul class="howto">
+      <li><b>Converted.</b> A deployable artifact you can apply as-is after review.</li>
+      <li><b>Guided.</b> The plan is generated; you apply it. Onboarding waves, notification
+        routing, management zone design.</li>
+      <li><b>Rebuild by hand.</b> A copy would mislead, so the tool inventories what exists
+        and names what to build instead &mdash; business events, method-level capture
+        rules, dashboards whose entity model has genuinely changed.</li>
+      <li><b>Nothing to migrate.</b> Dynatrace already does it. Business transactions,
+        transaction snapshots, dynamic baselines, tier and node definitions, diagnostic
+        capture actions. Carrying these across costs weeks and delivers nothing.</li>
+    </ul>
+
+    <h3 class="map-h">What it will not do</h3>
+    <ul class="howto">
+      <li><b>Guess a metric.</b> An AppD metric path with no documented Dynatrace
+        equivalent is reported as manual with the reason, never mapped to a lookalike key.
+        A wrong metric deploys cleanly and watches the wrong thing.</li>
+      <li><b>Invent a threshold.</b> Baseline health rules carry no static number, so none
+        is fabricated &mdash; they are reported as already covered by Davis.</li>
+      <li><b>Scope an entity.</b> AppD tier and business-transaction names have no reliable
+        offline mapping to Dynatrace entities. A guessed filter would match nothing while
+        looking correct, so the original scope travels as a note for a human to apply.</li>
+      <li><b>Turn your alerts on.</b> Detectors are created disabled. You enable them per
+        wave, after validation.</li>
+      <li><b>Move history.</b> Dynatrace rejects logs older than 24 hours and metrics older
+        than an hour. Log history can be re-stamped and replayed; AppD metric history
+        cannot move at all, which is why parity means running both stacks in parallel.</li>
+    </ul>
+  </details>
+
   <details class="panel v v-conv" id="howto-card" style="margin-top:16px">
     <summary class="h">How to deploy what you downloaded</summary>
     <p class="note">The converted files fall into three groups, each with its own route into
@@ -436,23 +506,36 @@
         a <code>0</code> placeholder. Set a real threshold before enabling.</li>
     </ul>
 
-    <h3 class="map-h">3. Terraform &mdash; <code>alerts_tf/</code>,
-        <code>pipelines_tf/</code></h3>
-    <p class="note">Each folder is a self-contained module using the
-       <code>dynatrace-oss/dynatrace</code> provider. Run from inside the folder.</p>
-    <pre class="cmdblock">terraform init
-terraform plan     # review before anything is created
-terraform apply</pre>
+    <h3 class="map-h">3. Terraform &mdash; <code>terraform/</code></h3>
+    <p class="note">One <b>child module</b> for the whole run, not a folder per artifact.
+       It declares which provider it needs but configures none, so it drops into an
+       existing repository and inherits your provider setup &mdash; no duplicate
+       <code>terraform&nbsp;{}</code> block to collide with yours.</p>
+    <pre class="cmdblock">module "migrated" {
+  source = "./modules/migrated"
+
+  name_prefix       = "[migrated] "
+  detectors_enabled = false   # flip per wave, once validated
+}</pre>
     <ul class="howto">
-      <li><b>Anomaly detectors</b> need an API token:
-        <code>DT_ENV_URL</code> and <code>DT_API_TOKEN</code>.</li>
+      <li><b>Already have a Terraform repo?</b> Copy <code>terraform/</code> in, add the
+        block above, and <code>terraform init &amp;&amp; terraform plan</code>. Nothing in
+        it configures a provider, alias or backend, so it will not fight your setup.</li>
+      <li><b>Starting fresh?</b> <code>terraform/example-root/</code> is a working root
+        configuration with the provider block. Run terraform from in there &mdash; a child
+        module cannot be applied directly.</li>
+      <li><b>Detectors are created disabled</b> by default. Enabling hundreds at once pages
+        people about a system nobody has validated, and Davis needs 7&ndash;14 days before
+        its baselines are trustworthy. Set <code>detectors_enabled = true</code> per wave.</li>
+      <li><b>Anomaly detectors and request attributes</b> use an API token:
+        <code>DYNATRACE_ENV_URL</code> and <code>DYNATRACE_API_TOKEN</code>.</li>
       <li><b>OpenPipeline</b> needs an OAuth client instead, not a token:
-        <code>DT_ENV_URL</code>, <code>DT_CLIENT_ID</code>, <code>DT_CLIENT_SECRET</code>,
+        <code>DT_CLIENT_ID</code>, <code>DT_CLIENT_SECRET</code>,
         <code>DT_ACCOUNT_ID</code>, with scopes
         <code>openpipeline:configurations:read</code> and
         <code>&hellip;:write</code>.</li>
-      <li>Prefer the JSON route if you have no Terraform state story yet &mdash; choose
-        <b>JSON only</b> in the export selector and skip this section entirely.</li>
+      <li>No Terraform state story yet? Choose <b>JSON only</b> in the export selector and
+        skip this section entirely.</li>
     </ul>
 
     <h3 class="map-h">Order matters</h3>
@@ -1052,6 +1135,20 @@ const EXAMPLES = {
       { widgetType: "GraphWidget", title: "Calls per minute", x: 600, y: 0, width: 600, height: 240,
         dataSeriesTemplates: [{ metricMatchCriteriaTemplate: { metricExpressionTemplate: {
           metricPath: "Overall Application Performance|Calls per Minute" } } }] }] }) },
+  appdcollector: { file: "example_appd_data_collectors.json",
+    text: JSON.stringify({ dataGathererConfigs: [
+      { name: "userId", dataGathererType: "HTTP", parameters: ["userId"],
+        headers: ["X-Tenant"], cookies: ["session_id"] },
+      { name: "orderTotal", dataGathererType: "METHOD_INVOCATION",
+        className: "com.shop.OrderService", methodName: "checkout",
+        agentType: "APP_AGENT" }] }) },
+  appdsched: { file: "example_appd_schedules.json",
+    text: JSON.stringify([
+      { name: "Business Hours", timezone: "Europe/London", scheduleType: "WEEKLY",
+        startTime: "09:00", endTime: "17:30",
+        days: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"] },
+      { name: "Nightly Batch", timeZone: "UTC", recurrenceType: "DAILY",
+        startTime: "23:00", endTime: "02:00" }]) },
   appdinv: { file: "example_appd_nodes.json",
     text: JSON.stringify([
       { id: 11, name: "node-a", tierName: "web", applicationName: "Checkout",
