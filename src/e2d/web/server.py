@@ -513,6 +513,51 @@ PAGE = r"""<!DOCTYPE html>
   .local { display:inline-flex; align-items:center; gap:8px; font-size:12.5px; color:var(--mut);
            border:1px solid var(--line); border-radius:999px; padding:5px 13px;
            background:rgba(255,255,255,.03); }
+  /* ---- view switching -------------------------------------------------
+     One attribute on #app decides which platform's sections are on screen.
+     `!important` is deliberate: the view system must beat every component's
+     own display rule, or a panel styled `display:flex` would ignore it. */
+  .v { display:none !important; }
+  [data-plat="home"] .v-home,
+  [data-plat="elastic"] .v-elastic,
+  [data-plat="appd"] .v-appd,
+  [data-plat="elastic"] .v-conv,
+  [data-plat="appd"] .v-conv { display:revert !important; }
+  /* a hidden result panel must stay hidden even when its view is active */
+  .card.hide.v-conv { display:none !important; }
+  /* inline runs inside a paragraph must not become blocks */
+  span.v { display:revert !important; }
+  [data-plat="home"] span.v-home,
+  [data-plat="elastic"] span.v-elastic,
+  [data-plat="appd"] span.v-appd { display:inline !important; }
+  [data-plat="home"] span.v:not(.v-home),
+  [data-plat="elastic"] span.v:not(.v-elastic):not(.v-conv),
+  [data-plat="appd"] span.v:not(.v-appd):not(.v-conv) { display:none !important; }
+
+  .tabs { display:flex; gap:4px; padding:3px; border:1px solid var(--line2);
+          border-radius:999px; background:rgba(0,0,0,.25); }
+  .tab { margin:0; padding:6px 15px; font-size:13px; font-weight:600; border-radius:999px;
+         background:transparent; border:0; color:var(--mut); box-shadow:none; cursor:pointer; }
+  .tab:hover:not(:disabled) { color:var(--ink); filter:none; }
+  .tab[aria-current="page"] { background:var(--panel2); color:var(--ink); }
+  .tab:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
+
+  .picker { display:grid; gap:16px; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); }
+  .pcard { display:flex; flex-direction:column; align-items:flex-start; gap:10px;
+           text-align:left; margin:0; padding:24px 22px; cursor:pointer;
+           background:var(--panel); border:1px solid var(--line); border-radius:14px;
+           box-shadow:none; transition:border-color .15s ease, transform .15s ease; }
+  .pcard:hover:not(:disabled) { border-color:var(--blue); transform:translateY(-2px);
+                                filter:none; }
+  .pcard:focus-visible { outline:2px solid var(--blue); outline-offset:3px; }
+  .pname { font-size:20px; font-weight:700; letter-spacing:-.015em; color:var(--ink);
+           font-family:"Segoe UI Variable Display","Segoe UI",system-ui,sans-serif; }
+  .pdesc { font-size:13.5px; line-height:1.6; color:var(--mut); font-weight:400; }
+  .pgo { margin-top:auto; font-size:13px; font-weight:650; color:var(--teal); }
+  .pickfoot { text-align:center; max-width:60ch; margin:18px auto 0; }
+  .platintro { padding:34px 0 18px; }
+  .platintro h1 { font-size:clamp(26px,4vw,36px); }
+
   .hero { text-align:center; padding:46px 0 30px; }
   h1 { margin:0 0 12px; padding-bottom:.08em; font-size:clamp(30px,5vw,44px); line-height:1.15; font-weight:700;
        letter-spacing:-.025em;
@@ -704,31 +749,49 @@ PAGE = r"""<!DOCTYPE html>
   <div class="bar">
     <span class="logo"><span class="mark">e2d</span> migration assist</span>
 
+    <nav class="tabs" id="tabs" aria-label="Source platform">
+      <button class="tab" data-view="home" aria-current="page">Home</button>
+      <button class="tab" data-view="elastic">Elastic</button>
+      <button class="tab" data-view="appd">AppDynamics</button>
+    </nav>
+
     <span class="local">localhost only, nothing leaves this machine</span>
   </div>
 </header>
-<main class="wrap">
-  <div class="hero">
+<main class="wrap" id="app" data-plat="home">
+  <div class="hero v v-home">
     <h1>Elastic &amp; AppDynamics &#8594; Dynatrace</h1>
-    <p class="tagline">Drop your exports, a <code>.zip</code> or individual files and get
-       dashboards, DQL, alerts, OpenPipeline configs and — for AppDynamics — a
-       OneAgent onboarding plan sized by host.
+    <p class="tagline">Convert your source platform's dashboards, alerts, queries and
+       configuration into Dynatrace equivalents, pull straight from a live estate, and push
+       the results to a tenant.
        <strong>Everything runs on this machine.</strong> Nothing is uploaded anywhere.</p>
   </div>
 
-  <div class="card" id="stage-input">
-    <div id="drop">
-      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-           stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-        <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
-      </svg>
-      <strong>Drop files here</strong> or click to choose
-      <p class="note" style="margin:6px 0 0"><b>Elastic</b> Kibana dashboards &middot; ES|QL
-         &middot; Query DSL &middot; KQL/Lucene &middot; Logstash &middot; watchers<br>
-         <b>AppDynamics</b> health rules &middot; dashboards &middot; app/tier/node inventory
-         &middot; policies &amp; actions</p>
-      <input type="file" id="picker" multiple class="hide">
+  <div class="picker v v-home">
+    <button class="pcard" data-view="elastic">
+      <span class="pname">Elastic</span>
+      <span class="pdesc">Kibana dashboards, ES|QL / Query DSL / KQL / Lucene, Logstash and
+        ingest pipelines, watchers and alerting rules, transforms, SLOs, Beats configs and
+        ILM policies. Includes live pull from Kibana and log backfill.</span>
+      <span class="pgo">Start converting &#8594;</span>
+    </button>
+    <button class="pcard" data-view="appd">
+      <span class="pname">AppDynamics</span>
+      <span class="pdesc">Health rules, custom dashboards, application/tier/node inventory,
+        policies and actions &mdash; plus a OneAgent onboarding plan sized by host rather
+        than by application.</span>
+      <span class="pgo">Start converting &#8594;</span>
+    </button>
+  </div>
+  <p class="note pickfoot v v-home">Not sure, or migrating both at once? Pick either &mdash;
+     every file is identified by its own contents, so a mixed drop converts correctly
+     whichever tab you are on.</p>
+
+  <div class="v v-elastic">
+    <div class="hero platintro">
+      <h1>Elastic &#8594; Dynatrace</h1>
+      <p class="tagline">Kibana dashboards, queries, ingest pipelines, watchers, transforms,
+         SLOs and Beats configs.</p>
     </div>
     <div class="egrow note">Try an example:
       <button class="egchip" data-eg="dashboard">dashboard</button>
@@ -740,10 +803,37 @@ PAGE = r"""<!DOCTYPE html>
       <button class="egchip" data-eg="shipper">filebeat</button>
       <button class="egchip" data-eg="synthetic">heartbeat</button>
       <button class="egchip" data-eg="config">ILM</button>
-      <span class="egsep">AppD:</span>
+    </div>
+  </div>
+
+  <div class="v v-appd">
+    <div class="hero platintro">
+      <h1>AppDynamics &#8594; Dynatrace</h1>
+      <p class="tagline">Health rules, custom dashboards, policies and actions &mdash; and an
+         onboarding plan that sizes the OneAgent rollout by host.</p>
+    </div>
+    <div class="egrow note">Try an example:
       <button class="egchip" data-eg="appdrule">health rules</button>
       <button class="egchip" data-eg="appddash">dashboard</button>
-      <button class="egchip" data-eg="appdinv">inventory</button>
+      <button class="egchip" data-eg="appdinv">node inventory</button>
+    </div>
+  </div>
+
+  <div class="card v v-conv" id="stage-input">
+    <div id="drop">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+      <strong>Drop files here</strong> or click to choose
+      <p class="note v v-elastic" style="margin:6px 0 0">Kibana dashboards &middot; ES|QL
+         &middot; Query DSL &middot; KQL/Lucene &middot; Logstash &middot; watchers &middot;
+         transforms &middot; SLOs &middot; Beats configs &middot; ILM policies</p>
+      <p class="note v v-appd" style="margin:6px 0 0">Health rules &middot; custom dashboards
+         &middot; application/tier/node inventory &middot; policies &amp; actions, exported
+         as JSON from the Controller</p>
+      <input type="file" id="picker" multiple class="hide">
     </div>
     <ul class="files" id="filelist"></ul>
     <div class="conn">
@@ -757,7 +847,7 @@ PAGE = r"""<!DOCTYPE html>
     <div class="err-box hide" id="err"></div>
   </div>
 
-  <div class="card" id="quick" style="margin-top:16px">
+  <div class="card v v-elastic" id="quick" style="margin-top:16px">
     <h2 style="margin:0 0 4px;font-size:17px">Paste a query</h2>
     <p class="note" style="margin:0 0 10px">Paste one ES|QL, Query DSL, KQL or Lucene query.
        The DQL appears below with any warnings, ready to copy.</p>
@@ -776,9 +866,9 @@ PAGE = r"""<!DOCTYPE html>
     <div id="qout"></div>
   </div>
 
-  <div class="card hide" id="stage-result" style="margin-top:24px"></div>
+  <div class="card hide v v-conv" id="stage-result" style="margin-top:24px"></div>
 
-  <details class="card" id="mapping-card" style="margin-top:16px">
+  <details class="card v v-elastic" id="mapping-card" style="margin-top:16px">
     <summary class="h">Mapping rules (applied to every conversion)</summary>
     <p class="note">Route Elastic index patterns to Grail data objects and rename fields.
      Rules are saved in this browser and applied to every conversion automatically;
@@ -801,7 +891,7 @@ PAGE = r"""<!DOCTYPE html>
   
   </details>
 
-  <details class="card" id="pull-card" style="margin-top:16px">
+  <details class="card v v-elastic" id="pull-card" style="margin-top:16px">
     <summary class="h">Pull from a live Elastic estate (optional)</summary>
     <p class="note">Connect to Kibana/Elasticsearch and pull dashboards, rules, ingest pipelines
        and watchers via their APIs. Credentials are kept in memory and never written to disk.</p>
@@ -815,7 +905,7 @@ PAGE = r"""<!DOCTYPE html>
     <div id="discovery"></div>
   </details>
 
-  <details class="card" id="backfill-card" style="margin-top:16px">
+  <details class="card v v-elastic" id="backfill-card" style="margin-top:16px">
     <summary class="h">Backfill historical logs (past the 24h wall)</summary>
     <p class="note">Streams old logs straight from Elasticsearch into Dynatrace: each record
        is re-stamped into the accepted window and keeps its true event time in
@@ -843,9 +933,9 @@ PAGE = r"""<!DOCTYPE html>
   </details>
 
 
-  <details class="card" style="margin-top:16px">
+  <details class="card v v-conv" style="margin-top:16px">
     <summary class="h">What it converts, and limits</summary>
-  <div class="grid">
+  <div class="grid v v-elastic">
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
         stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -932,6 +1022,8 @@ PAGE = r"""<!DOCTYPE html>
       <p>Heartbeat HTTP monitors <b>&#8594; Dynatrace Synthetic monitor definitions</b>;
          TCP and ICMP checks are flagged for network availability monitors.</p>
     </div>
+  </div>
+  <div class="grid v v-appd">
     <div class="feat">
       <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
         stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -967,40 +1059,49 @@ PAGE = r"""<!DOCTYPE html>
     </div>
   </div>
   <p class="alsonote">Every run also writes <code>MIGRATION_REPORT.md</code> with a
-     deployment-order plan, a field manifest per dashboard (<code>*.fields.md</code>),
-     <code>METRICS-GUIDE.md</code> for log&#8594;metric extraction, a <code>CUTOVER-PLAN.md</code> dual-ship schedule when ILM policies are present, and a suggested
-     <code>mapping.config.json</code> when your index patterns need rules.</p>
+     deployment-order plan and a scorecard, plus a field manifest per dashboard
+     (<code>*.fields.md</code>) listing what must exist at ingest or a tile renders empty.
+     <span class="v v-elastic">Elastic runs add <code>METRICS-GUIDE.md</code> for
+     log&#8594;metric extraction, a <code>CUTOVER-PLAN.md</code> dual-ship schedule when ILM
+     policies are present, and a suggested <code>mapping.config.json</code> when your index
+     patterns need rules.</span>
+     <span class="v v-appd">AppDynamics runs add <code>ONBOARDING-PLAN.md</code> with the
+     OneAgent rollout waves, plus <code>waves.json</code> and <code>host_groups.json</code>
+     for driving an Ansible inventory.</span></p>
 
   <h2>Limitations</h2>
   <div class="cavs">
     <ul>
-      <li><strong>Maps and truly-custom Vega panels</strong> become placeholder tiles flagged
-          MANUAL. Rebuild those by hand in Dynatrace.</li>
-      <li><strong>Lens formulas with no DQL equivalent</strong> fall back to a flagged
-          <code>count()</code> placeholder. Nothing is converted silently wrong.</li>
+      <li class="v v-elastic"><strong>Maps and truly-custom Vega panels</strong> become
+          placeholder tiles flagged MANUAL. Rebuild those by hand in Dynatrace.</li>
+      <li class="v v-elastic"><strong>Lens formulas with no DQL equivalent</strong> fall back
+          to a flagged <code>count()</code> placeholder. Nothing is converted silently wrong.</li>
       <li><strong>A converted tile renders empty, with no error,</strong> when a custom field
           it queries isn't ingested in Dynatrace. Check each dashboard's
           <code>.fields.md</code> manifest before trusting a blank chart.</li>
-      <li><strong>Index patterns without a mapping rule default to <code>logs</code>.</strong>
-          Review the suggested <code>mapping.config.json</code> and re-run to make routing
-          explicit.</li>
+      <li class="v v-elastic"><strong>Index patterns without a mapping rule default to
+          <code>logs</code>.</strong> Review the suggested <code>mapping.config.json</code> and
+          re-run to make routing explicit.</li>
       <li><strong>Alert thresholds and evaluation windows are best-effort.</strong> Review
           each anomaly detector before enabling it in production.</li>
-      <li><strong>Canvas workpads and ML jobs have no converter.</strong> Unrecognised
-          files are listed as skipped, with a reason.</li>
-      <li><strong>Converted AppD alerts and tiles are not entity-scoped.</strong> AppD scopes
-          by application/tier/business-transaction name, and there is no reliable offline
-          mapping to Dynatrace entities &mdash; a guessed filter would silently match nothing.
-          Each one carries its original AppD scope as a note; add the filter before enabling.</li>
-      <li><strong>The AppD dashboard widget schema is not publicly documented,</strong> so
-          widgets are read defensively. Anything unrecognised becomes a placeholder tile naming
-          the original widget type rather than disappearing.</li>
-      <li><strong>AppD history cannot be backfilled.</strong> Dynatrace rejects metric data
-          older than an hour, so before/after comparison means running both stacks over the
-          same window. Budget a dual-run period per wave.</li>
-      <li><strong>Dynatrace rejects log records older than 24 hours,</strong> so history
-          cannot be replayed as-is. <code>e2d backfill</code> re-stamps it and keeps the
-          true event time in <code>original_timestamp</code>; <code>CUTOVER-PLAN.md</code>
+      <li class="v v-elastic"><strong>Canvas workpads and ML jobs have no converter.</strong>
+          Unrecognised files are listed as skipped, with a reason.</li>
+      <li class="v v-appd"><strong>Converted AppD alerts and tiles are not entity-scoped.</strong>
+          AppD scopes by application/tier/business-transaction name, and there is no reliable
+          offline mapping to Dynatrace entities &mdash; a guessed filter would silently match
+          nothing. Each one carries its original AppD scope as a note; add the filter before
+          enabling.</li>
+      <li class="v v-appd"><strong>The AppD dashboard widget schema is not publicly
+          documented,</strong> so widgets are read defensively. Anything unrecognised becomes a
+          placeholder tile naming the original widget type rather than disappearing.</li>
+      <li class="v v-appd"><strong>AppD history cannot be backfilled.</strong> Dynatrace rejects
+          metric data older than an hour, so before/after comparison means running both stacks
+          over the same window. Budget a dual-run period per wave.</li>
+      <li class="v v-appd"><strong>No live AppD Controller pull yet.</strong> Export the health
+          rules, dashboards and node inventory from the Controller and drop the files here.</li>
+      <li class="v v-elastic"><strong>Dynatrace rejects log records older than 24 hours,</strong>
+          so history cannot be replayed as-is. <code>e2d backfill</code> re-stamps it and keeps
+          the true event time in <code>original_timestamp</code>; <code>CUTOVER-PLAN.md</code>
           schedules the dual-ship overlap instead.</li>
     </ul>
   </div>
@@ -1018,6 +1119,25 @@ function showFiles() {
   go.disabled = chosen.length === 0;
 }
 function addFiles(list) { chosen = chosen.concat([...list]); showFiles(); }
+
+// ---- platform tabs ---------------------------------------------------
+// The tab only decides which sections are on screen. Conversion always
+// identifies each file by its own contents, so a mixed drop still converts
+// correctly whichever tab is active — the tab never gates the engine.
+const VIEWS = ["home", "elastic", "appd"];
+function showView(name) {
+  if (!VIEWS.includes(name)) name = "home";
+  $("#app").dataset.plat = name;
+  document.querySelectorAll("#tabs .tab").forEach(t => {
+    if (t.dataset.view === name) t.setAttribute("aria-current", "page");
+    else t.removeAttribute("aria-current");
+  });
+  window.localStorage.setItem("e2d_view", name);
+  if (name !== "home") window.scrollTo({ top: 0, behavior: "smooth" });
+}
+document.querySelectorAll("[data-view]").forEach(el =>
+  el.addEventListener("click", () => showView(el.dataset.view)));
+showView(window.localStorage.getItem("e2d_view") || "home");
 
 // alerts/pipelines export format (JSON vs Terraform) — remembered per browser
 const emitSel = $("#emitsel");
