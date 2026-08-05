@@ -264,7 +264,7 @@ def push_cli(args) -> int:
         try:
             import requests  # noqa: F401
         except ImportError:
-            print("error: 'requests' is required for --apply: pip install elastic-to-dynatrace[push]",
+            print("error: 'requests' is required for --apply: pip install migration-assistant[push]",
                   file=sys.stderr)
             return 2
 

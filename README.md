@@ -6,13 +6,13 @@ for AppDynamics, a OneAgent onboarding plan sized by host.
 
 ## Use it in the browser (nothing to install)
 
-**https://jd-dt94.github.io/elastic-to-dynatrace/**
+**https://jd-dt94.github.io/migration-assistant/**
 
 Drag an export onto the page, click **Convert**, download the results.
 Everything runs inside your browser tab (Python compiled to WebAssembly) —
 your files are never uploaded anywhere.
 
-[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/JD-DT94/elastic-to-dynatrace?quickstart=1)
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/JD-DT94/migration-assistant?quickstart=1)
 
 ## What converts
 

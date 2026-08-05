@@ -1,4 +1,4 @@
-﻿"""Command-line interface for elastic-to-dynatrace (`e2d`).
+﻿"""Command-line interface for the migration assistant (`e2d`).
 
 Subcommands
 -----------
