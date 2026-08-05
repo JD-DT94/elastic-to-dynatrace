@@ -43,6 +43,8 @@ PRODUCT_OF_KIND = {
     # AppDynamics
     "appd_health_rule": "appdynamics", "appd_dashboard": "appdynamics",
     "appd_inventory": "appdynamics", "appd_policies": "appdynamics",
+    "appd_infopoints": "appdynamics", "appd_datacollectors": "appdynamics",
+    "appd_txn_rules": "appdynamics",
 }
 
 
@@ -81,6 +83,9 @@ class MigrationSummary:
     appd_davis_covered: int = 0   # health rules built-in Davis already covers
     appd_hosts: int = 0           # distinct hosts needing a OneAgent install
     appd_nodes: int = 0           # AppD nodes those hosts carry
+    appd_waves: int = 0           # rollout waves the onboarding plan produced
+    appd_kinds: List[str] = field(default_factory=list)          # AppD artifact kinds seen
+    appd_rule_classes: Dict[str, int] = field(default_factory=dict)  # converted/covered/manual
 
     @property
     def products(self) -> List[str]:
@@ -137,6 +142,10 @@ def _appd_kind(doc) -> Optional[str]:
     from e2d.appd.policies import looks_like_policy_export
     if looks_like_policy_export(doc):
         return "appd_policies"
+    from e2d.appd.instrumentation import detect_kind
+    instr = detect_kind(doc)
+    if instr:
+        return instr
     from e2d.appd.inventory import looks_like_inventory
     if looks_like_inventory(doc):
         return "appd_inventory"
@@ -503,6 +512,10 @@ def _do_appd_health_rule(text: str, src: str, out: Path, config: MappingConfig,
         outs.append(f"alerts/{base}.detectors.json")
 
     summary.appd_davis_covered += covered
+    for key, n in (("converted", converted), ("covered-by-davis", covered),
+                   ("manual", manual)):
+        if n:
+            summary.appd_rule_classes[key] = summary.appd_rule_classes.get(key, 0) + n
     if covered:
         notes.append(
             f"{covered} of {len(docs)} health rule(s) in this file compare against an AppD "
@@ -562,6 +575,7 @@ def _do_appd_inventory(text: str, src: str, out: Path, summary: MigrationSummary
 
     summary.appd_hosts += inv.host_count
     summary.appd_nodes += inv.node_count
+    summary.appd_waves += len(waves)
     notes = res.report.format_deduped()
     if inv.host_count:
         notes.append(
@@ -569,6 +583,26 @@ def _do_appd_inventory(text: str, src: str, out: Path, summary: MigrationSummary
             "OneAgent installs once per host and instruments every process on it, so the "
             f"rollout is {inv.host_count} installs across {len(waves)} wave(s).")
     summary.items.append(Item("onboarding", src, _status(res.report), outs, notes))
+
+
+def _do_appd_instrumentation(text: str, src: str, out: Path, kind: str,
+                             summary: MigrationSummary) -> None:
+    """Information points, data collectors, transaction detection rules.
+
+    None of these translate into a deployable artifact — Dynatrace's equivalents
+    are structurally different — so this writes the inventory and the guidance
+    rather than a conversion nobody could trust.
+    """
+    from e2d.appd.instrumentation import translate_instrumentation, render_instrumentation
+
+    res = translate_instrumentation(text, kind)
+    idir = out / "instrumentation"
+    idir.mkdir(parents=True, exist_ok=True)
+    base = Path(src).stem
+    (idir / f"{base}.md").write_text(render_instrumentation(res, source=src), encoding="utf-8")
+    summary.items.append(Item("instrumentation", src, _status(res.report),
+                              [f"instrumentation/{base}.md"],
+                              res.report.format_deduped()))
 
 
 def _do_appd_policies(text: str, src: str, out: Path, summary: MigrationSummary) -> None:
@@ -804,6 +838,8 @@ def run_migration(in_dir: str, out_dir: str, config: Optional[MappingConfig] = N
                     "appd_policies", "appd_health_rule"):
             _scan_secrets(text, rel, summary)
         before = len(summary.items)
+        if kind.startswith("appd_") and kind not in summary.appd_kinds:
+            summary.appd_kinds.append(kind)
         try:
             if kind == "kibana":
                 _do_kibana(text, rel, out, config, summary)
@@ -829,6 +865,8 @@ def run_migration(in_dir: str, out_dir: str, config: Optional[MappingConfig] = N
                 _do_appd_inventory(text, rel, out, summary)
             elif kind == "appd_policies":
                 _do_appd_policies(text, rel, out, summary)
+            elif kind in ("appd_infopoints", "appd_datacollectors", "appd_txn_rules"):
+                _do_appd_instrumentation(text, rel, out, kind, summary)
             else:
                 summary.skipped.append(f"{rel} — {_skip_reason(path)}")
         except Exception as e:  # one bad file never aborts the whole migration
@@ -854,6 +892,21 @@ def run_migration(in_dir: str, out_dir: str, config: Optional[MappingConfig] = N
         from e2d.cutover import render_cutover_plan
         (out / "CUTOVER-PLAN.md").write_text(
             render_cutover_plan(summary.ilm_policies, summary.template_patterns),
+            encoding="utf-8")
+
+    # An AppD run always gets the phased plan and the full catalogue, not just
+    # the artifacts that happened to convert — the items needing no migration
+    # are usually the largest slice of the estate, and they are invisible
+    # otherwise.
+    if summary.appd_kinds:
+        from e2d.appd.sequencing import render_sequencing, render_coverage
+        (out / "APPD-SEQUENCING.md").write_text(
+            render_sequencing(summary.appd_kinds, hosts=summary.appd_hosts,
+                              waves=summary.appd_waves,
+                              converted=summary.appd_rule_classes),
+            encoding="utf-8")
+        (out / "APPD-CATALOGUE.md").write_text(
+            render_coverage(summary.appd_kinds, converted=summary.appd_rule_classes),
             encoding="utf-8")
 
     (out / "MIGRATION_REPORT.md").write_text(render_report(summary), encoding="utf-8")
@@ -910,6 +963,11 @@ def render_report(summary: MigrationSummary) -> str:
             L.append(f"- **{summary.appd_davis_covered} health rule(s) need no migration at "
                      f"all** — they compare against an AppD baseline, which built-in Davis "
                      f"anomaly detection already does automatically.")
+        L.append("")
+        L.append("**`APPD-SEQUENCING.md`** has the ten-phase running order and the exit "
+                 "criteria per wave; **`APPD-CATALOGUE.md`** lists every kind of AppD "
+                 "configuration against its Dynatrace equivalent, including the items that "
+                 "need no migration at all.")
         L.append("")
     from e2d.score import build_scorecard, render_scorecard_md
     L.extend(render_scorecard_md(build_scorecard(summary)))

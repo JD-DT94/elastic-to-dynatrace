@@ -106,14 +106,54 @@ _LEAF_MAP: Dict[str, MetricMapping] = {
         "dt.host.disk.used.percent", "avg", 1.0, "percent", "percent", entity="host",
         davis_builtin="Disk space low (built-in infrastructure anomaly detection)"),
 
+    "disk queue length": MetricMapping(
+        "dt.host.disk.queue_length", "avg", 1.0, "count", "count", entity="host"),
+    "kb read/sec": MetricMapping(
+        "dt.host.disk.read.bytes", "sum", 1024.0, "KB/s", "bytes", entity="host"),
+    "kb written/sec": MetricMapping(
+        "dt.host.disk.write.bytes", "sum", 1024.0, "KB/s", "bytes", entity="host"),
+    "incoming kb/sec": MetricMapping(
+        "dt.host.net.nic.bytes_rx", "sum", 1024.0, "KB/s", "bytes", entity="host"),
+    "outgoing kb/sec": MetricMapping(
+        "dt.host.net.nic.bytes_tx", "sum", 1024.0, "KB/s", "bytes", entity="host"),
+
     # -- JVM ------------------------------------------------------------------ #
     "current usage (mb)": MetricMapping(
         "dt.runtime.jvm.memory_pool.used", "avg", MB_TO_BYTES, "MB", "bytes",
+        entity="process"),
+    "used (mb)": MetricMapping(
+        "dt.runtime.jvm.memory_pool.used", "avg", MB_TO_BYTES, "MB", "bytes",
+        entity="process"),
+    "committed (mb)": MetricMapping(
+        "dt.runtime.jvm.memory_pool.committed", "avg", MB_TO_BYTES, "MB", "bytes",
         entity="process"),
     "gc time spent per min (ms)": MetricMapping(
         "dt.runtime.jvm.gc.collection_time", "sum", 1.0, "ms", "milliseconds",
         entity="process",
         note="Verify the GC metric key and unit in your tenant before enabling."),
+    "number of times gc per min": MetricMapping(
+        "dt.runtime.jvm.gc.collection_count", "sum", 1.0, "count", "count",
+        entity="process"),
+    "current no. of threads": MetricMapping(
+        "dt.runtime.jvm.threads", "avg", 1.0, "count", "count", entity="process"),
+
+    # -- .NET CLR -------------------------------------------------------------- #
+    "% time in gc": MetricMapping(
+        "dt.runtime.dotnet.gc.time", "avg", 1.0, "percent", "percent", entity="process",
+        note="Verify the .NET GC metric key in your tenant; CLR metric names vary by "
+             "OneAgent version."),
+    "total bytes in all heaps": MetricMapping(
+        "dt.runtime.dotnet.gc.heap_size", "avg", 1.0, "bytes", "bytes", entity="process"),
+
+    # -- databases ------------------------------------------------------------- #
+    "average query response time (ms)": MetricMapping(
+        "dt.service.request.response_time", "avg", MS_TO_US, "ms", "microseconds",
+        entity="database",
+        davis_builtin="Database service response time degradation (built-in Davis)",
+        note="Filter to database services; Dynatrace models a database as a service."),
+    "queries per minute": MetricMapping(
+        "dt.service.request.count", "sum", 1.0, "queries/min", "count per interval",
+        entity="database"),
 }
 
 # Leaves we recognise but deliberately refuse to map, with the reason. These
@@ -141,6 +181,22 @@ _KNOWN_UNMAPPED: Dict[str, str] = {
     "average request size (bytes)": (
         "Not a built-in Dynatrace service metric; capture it as a request attribute "
         "first if you need to alert on it."),
+    "art (ms)": (
+        "Ambiguous abbreviation in an AppD metric path — it usually means Average "
+        "Response Time, but rename the metric in the export (or map it by hand) rather "
+        "than have the converter assume."),
+    "calls": (
+        "Ambiguous: AppD uses bare `Calls` for both totals and rates depending on the "
+        "path. Use `Calls per Minute` or `Total Calls` so the conversion is unambiguous."),
+    "nodes available": (
+        "An AppD availability counter with no Dynatrace equivalent — Dynatrace tracks "
+        "host and process availability directly. Alert on the entity, not a count."),
+    "hardware resources|cpu|%idle": (
+        "Dynatrace reports CPU as usage, not idle. Invert the condition and alert on "
+        "`dt.host.cpu.usage` going ABOVE (100 - your idle threshold)."),
+    "%idle": (
+        "Dynatrace reports CPU as usage, not idle. Invert the condition and alert on "
+        "`dt.host.cpu.usage` going ABOVE (100 - your idle threshold)."),
 }
 
 

@@ -36,6 +36,18 @@ your files are never uploaded anywhere.
 | Health rules (`/controller/alerting/rest/v1/.../health-rules`) | Davis anomaly detectors (Settings JSON or Terraform), with AppD units rescaled |
 | Custom dashboards (`CustomDashboardImportExportServlet`) | Dynatrace dashboard JSON with DQL tiles |
 | Policies and actions (`/controller/policies`, `/controller/actions`) | Notification plan (problem notifications / Workflow tasks) |
+| Information points, data collectors, transaction detection rules | Inventory + guidance (business events, request attributes, custom services) |
+| *(always)* | `APPD-SEQUENCING.md` — ten-phase running order with per-wave exit criteria |
+| *(always)* | `APPD-CATALOGUE.md` — every AppD config type vs its Dynatrace equivalent, including what needs no migration |
+
+The catalogue is the part worth reading first. It classifies every AppD config
+type as **converted automatically**, **guided** (plan generated, you apply it),
+**rebuild by hand**, or **nothing to migrate** — that last group being
+configuration that exists only because AppD needs manual setup for things
+Dynatrace derives automatically (service detection, dependency mapping,
+baselining, snapshot capture). Confirming which of those you hold is usually
+the cheapest scope reduction available, and treating the estate as a 1:1 port
+is the most expensive mistake.
 
 Three AppD-specific behaviours worth knowing, because they are where a naive
 converter goes silently wrong:

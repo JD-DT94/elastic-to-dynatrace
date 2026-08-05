@@ -17,12 +17,17 @@ Extraction reality (drives what each module assumes it will be handed):
 from e2d.appd.health_rules import translate_health_rule
 from e2d.appd.dashboards import convert_appd_dashboard
 from e2d.appd.inventory import translate_inventory, render_onboarding_plan
+from e2d.appd.instrumentation import translate_instrumentation
 from e2d.appd.policies import translate_policies
+from e2d.appd.sequencing import render_coverage, render_sequencing
 
 __all__ = [
     "translate_health_rule",
     "convert_appd_dashboard",
     "translate_inventory",
     "render_onboarding_plan",
+    "translate_instrumentation",
     "translate_policies",
+    "render_sequencing",
+    "render_coverage",
 ]

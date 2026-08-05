@@ -1066,8 +1066,11 @@ PAGE = r"""<!DOCTYPE html>
      policies are present, and a suggested <code>mapping.config.json</code> when your index
      patterns need rules.</span>
      <span class="v v-appd">AppDynamics runs add <code>ONBOARDING-PLAN.md</code> with the
-     OneAgent rollout waves, plus <code>waves.json</code> and <code>host_groups.json</code>
-     for driving an Ansible inventory.</span></p>
+     OneAgent rollout waves (plus <code>waves.json</code> and <code>host_groups.json</code>
+     for driving an Ansible inventory), <code>APPD-SEQUENCING.md</code> with the ten-phase
+     running order and per-wave exit criteria, and <code>APPD-CATALOGUE.md</code> listing
+     every kind of AppD configuration against its Dynatrace equivalent &mdash; including
+     the items that need no migration at all.</span></p>
 
   <h2>Limitations</h2>
   <div class="cavs">
