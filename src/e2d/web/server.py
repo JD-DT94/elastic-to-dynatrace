@@ -658,14 +658,6 @@ PAGE = r"""<!DOCTYPE html>
     font:12px ui-monospace,Consolas,monospace; }
   #bf_list table, #bf_out table { font-size:12.5px; }
   a.logo { color:inherit; text-decoration:none; }
-  .tabs { display:flex; gap:2px; flex-wrap:wrap; }
-  .tab { font:600 13px "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
-         color:var(--mut); background:transparent; border:0; border-radius:8px;
-         padding:8px 13px; cursor:pointer; text-decoration:none; }
-  .tab:hover { color:var(--ink); background:rgba(255,255,255,.05); }
-  .tab.on { color:var(--ink); background:rgba(77,141,255,.16); }
-  .view { display:none; }
-  .view.on { display:block; }
   .cat-h { font:600 11px ui-monospace,Consolas,monospace; letter-spacing:.14em;
            text-transform:uppercase; color:var(--faint); margin:20px 0 2px; }
   .steps { list-style:none; margin:0; padding:0; }
@@ -691,10 +683,11 @@ PAGE = r"""<!DOCTYPE html>
   .map-h { margin:0 0 6px; font-size:14.5px; }
   .egrow { margin-top:12px; display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
   .egsep { margin-left:8px; font-size:12px; font-weight:600; color:var(--faint); }
-  .egchip { margin:0; padding:5px 12px; font-size:12px; font-weight:600;
+  .egchip { margin:0; padding:6px 14px; font-size:12px; font-weight:600; line-height:1.45;
             background:transparent; border:1px solid var(--line2); color:var(--mut);
             border-radius:999px; box-shadow:none; }
   .egchip:hover:not(:disabled) { border-color:var(--blue); color:var(--ink); filter:none; }
+  .egchip:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
   .gap select { background:rgba(0,0,0,.35); border:1px solid var(--line2); color:var(--ink);
                 border-radius:8px; padding:6px 9px; font:12.5px ui-monospace,Consolas,monospace; }
   .srcview { margin-top:10px; }
@@ -710,9 +703,11 @@ PAGE = r"""<!DOCTYPE html>
                 letter-spacing:.14em; text-transform:uppercase;
                 font-family:ui-monospace,Consolas,monospace; }
   /* coverage & caveats */
-  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(258px,1fr));
+          gap:14px; align-items:start; }
+  .grid + .grid { margin-top:14px; }
   .feat { background:linear-gradient(180deg,var(--panel2),var(--panel));
-          border:1px solid var(--line); border-radius:14px; padding:18px;
+          border:1px solid var(--line); border-radius:14px; padding:20px;
           transition:border-color .2s, transform .2s; }
   .feat:hover { border-color:var(--line2); transform:translateY(-2px); }
   .try { margin-top:12px; padding:7px 14px; font-size:12.5px; font-weight:600;
@@ -721,10 +716,25 @@ PAGE = r"""<!DOCTYPE html>
   .try:hover:not(:disabled) { border-color:var(--blue); color:var(--ink); filter:none; }
   .feat .ic { width:36px; height:36px; border-radius:10px; display:grid; place-items:center;
               background:rgba(77,141,255,.12); color:#7cc4ff; margin-bottom:12px; }
-  .feat h3 { margin:0 0 4px; font-size:14.5px; font-weight:650; }
-  .feat p { margin:0; font-size:13px; color:var(--mut); }
+  .feat h3 { margin:0 0 6px; font-size:14.5px; font-weight:650; line-height:1.35; }
+  .feat p { margin:0; font-size:13px; line-height:1.62; color:var(--mut); }
   .feat p b { color:#9fc3f5; font-weight:600; }
   .alsonote { color:var(--mut); font-size:13.5px; margin-top:14px; }
+
+  /* how-to-deploy panel */
+  .howto { list-style:none; margin:8px 0 18px; padding:0; }
+  .howto li { position:relative; padding:0 0 0 18px; margin-bottom:9px;
+              color:var(--mut); font-size:13.5px; line-height:1.62; }
+  .howto li:last-child { margin-bottom:0; }
+  .howto li::before { content:""; position:absolute; left:2px; top:.66em;
+                      width:7px; height:1.5px; background:var(--line2); }
+  .howto li b { color:var(--ink); font-weight:620; }
+  .cmdblock { margin:8px 0 14px; padding:12px 14px; overflow-x:auto;
+              background:rgba(0,0,0,.35); border:1px solid var(--line);
+              border-radius:10px; font:12.5px/1.7 ui-monospace,Consolas,monospace;
+              color:var(--ink); white-space:pre; }
+  #howto-card .map-h { margin:20px 0 4px; }
+  #howto-card .map-h:first-of-type { margin-top:14px; }
   .cavs { border:1px solid var(--line); border-left:3px solid var(--rev); border-radius:12px;
           background:linear-gradient(180deg,rgba(224,166,60,.05),transparent 60%), var(--panel);
           padding:8px 22px 14px; }
@@ -867,6 +877,72 @@ PAGE = r"""<!DOCTYPE html>
   </div>
 
   <div class="card hide v v-conv" id="stage-result" style="margin-top:24px"></div>
+
+  <details class="card v v-conv" id="howto-card" style="margin-top:16px">
+    <summary class="h">How to deploy what you downloaded</summary>
+    <p class="note">The converted files fall into three groups, each with its own route into
+       Dynatrace. Everything below is a one-time setup per environment.</p>
+
+    <h3 class="map-h">1. Dashboards &mdash; <code>dashboards/*.json</code></h3>
+    <p class="note">Each file is a bare dashboard document, so the Dashboards app imports it
+       directly and names it after the file.</p>
+    <ul class="howto">
+      <li><b>In the UI:</b> Dashboards app &rarr; <b>Upload</b> &rarr; pick the
+        <code>.json</code>. Nothing else to configure.</li>
+      <li><b>Via API:</b> <code>POST {env}/platform/document/v1/documents</code> as
+        <code>multipart/form-data</code> with <code>name</code>, <code>type=dashboard</code>
+        and the file as <code>content</code>. Token scope:
+        <code>document:documents:write</code>.</li>
+    </ul>
+
+    <h3 class="map-h">2. Settings objects &mdash; <code>*.detectors.json</code>,
+        <code>*.pipeline.json</code>, <code>*.windows.json</code></h3>
+    <p class="note">These files <em>are</em> the request body &mdash; a JSON array of
+       <code>{schemaId, scope, value}</code> objects. Post one file, get one or more
+       configuration objects.</p>
+    <ul class="howto">
+      <li><code>POST {env}/api/v2/settings/objects</code> with
+        <code>Content-Type: application/json</code> and the file as the body.
+        Token scope: <code>settings:objects:write</code>.</li>
+      <li>Covers Davis anomaly detectors (from alerts and health rules), OpenPipeline
+        pipelines, and maintenance windows (from AppD schedules).</li>
+      <li>A <code>207</code> response is normal for a multi-object body &mdash; check each
+        entry's <code>code</code>, because one object can fail while the rest succeed.</li>
+      <li>Detectors converted from a dynamic threshold ship <b>disabled</b> on purpose, with
+        a <code>0</code> placeholder. Set a real threshold before enabling.</li>
+    </ul>
+
+    <h3 class="map-h">3. Terraform &mdash; <code>alerts_tf/</code>,
+        <code>pipelines_tf/</code></h3>
+    <p class="note">Each folder is a self-contained module using the
+       <code>dynatrace-oss/dynatrace</code> provider. Run from inside the folder.</p>
+    <pre class="cmdblock">terraform init
+terraform plan     # review before anything is created
+terraform apply</pre>
+    <ul class="howto">
+      <li><b>Anomaly detectors</b> need an API token:
+        <code>DT_ENV_URL</code> and <code>DT_API_TOKEN</code>.</li>
+      <li><b>OpenPipeline</b> needs an OAuth client instead, not a token:
+        <code>DT_ENV_URL</code>, <code>DT_CLIENT_ID</code>, <code>DT_CLIENT_SECRET</code>,
+        <code>DT_ACCOUNT_ID</code>, with scopes
+        <code>openpipeline:configurations:read</code> and
+        <code>&hellip;:write</code>.</li>
+      <li>Prefer the JSON route if you have no Terraform state story yet &mdash; choose
+        <b>JSON only</b> in the export selector and skip this section entirely.</li>
+    </ul>
+
+    <h3 class="map-h">Order matters</h3>
+    <p class="note">Deploy pipelines before dashboards, and dashboards before alerts:
+       pipelines create the fields the tiles query, and detectors evaluating data that is
+       not flowing yet will just fire false alarms. Each run writes the exact order for
+       your artifacts into <code>MIGRATION_REPORT.md</code>.</p>
+
+    <h3 class="map-h">Or skip all of it</h3>
+    <p class="note">You are running locally, so dashboards and detectors can be pushed
+       straight from the deploy panel in the results below &mdash; enter your environment
+       URL and a token and it calls the same APIs described above. Credentials stay on this
+       machine. Terraform is still the route for OpenPipeline and Workflows.</p>
+  </details>
 
   <details class="card v v-elastic" id="mapping-card" style="margin-top:16px">
     <summary class="h">Mapping rules (applied to every conversion)</summary>

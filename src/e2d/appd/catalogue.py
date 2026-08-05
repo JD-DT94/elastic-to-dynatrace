@@ -182,6 +182,25 @@ CATALOGUE: List[Item] = [
          "Dynatrace detects the mainstream stacks natively; only genuinely unusual entry "
          "points need a custom service definition.",
          ("appd_txn_rules",)),
+    Item("Service endpoints", "Service endpoints (detected automatically)",
+         "transactions", NOT_NEEDED, 7,
+         "Every endpoint on a service is detected, with no per-application quota. Keep the "
+         "AppD list as a checklist for confirming the same endpoints appear after "
+         "instrumentation, not as configuration to port.",
+         ("appd_service_endpoints",)),
+    Item("Backends and remote services", "Smartscape topology (detected automatically)",
+         "transactions", NOT_NEEDED, 3,
+         "Databases, queues and outbound HTTP dependencies are discovered from trace data "
+         "and the dependency map builds itself. Use the AppD list to verify the same "
+         "dependencies appear once agents report.",
+         ("appd_backends",)),
+    Item("Database collectors", "Database monitoring via the calling services, plus an "
+         "extension for instance-level metrics",
+         "transactions", ASSISTED, 7,
+         "Configured differently rather than migrated: deep visibility comes from the "
+         "services calling the database. Decide per database whether instance-level metrics "
+         "justify an extension.",
+         ("appd_db_collectors",)),
 
     # -- 4. alerting -------------------------------------------------------- #
     Item("Health rules with static thresholds", "Davis anomaly detectors",
@@ -217,6 +236,13 @@ CATALOGUE: List[Item] = [
          "Scheduled suppression becomes a maintenance window; conditional suppression "
          "becomes an alerting profile filter.",
          ("appd_policies", "appd_health_rule")),
+    Item("Schedules", "Maintenance windows",
+         "alerting", AUTOMATIC, 5,
+         "AppD schedules decide when a rule evaluates; Dynatrace detectors run "
+         "continuously, so the intent becomes a maintenance window. Converted to a "
+         "Settings body — check the timezone before deploying, since an offset turns a "
+         "maintenance window into an unannounced blind spot.",
+         ("appd_schedules",)),
     Item("Baselines (dynamic thresholds)", "Davis auto-adaptive and seasonal baselines",
          "alerting", NOT_NEEDED, 5,
          "Built in. No baseline configuration to migrate — but Davis needs 7 to 14 days of "

@@ -93,3 +93,52 @@ def test_hidden_results_panel_stays_hidden_when_a_view_opens():
     for name, html in PAGES.items():
         assert re.search(r"\[hidden\]\.v|\.card\.hide\.v-conv", html), \
             f"{name}: no guard keeping an empty results panel hidden"
+
+
+@pytest.mark.parametrize("name", sorted(PAGES))
+def test_deployment_instructions_cover_all_three_routes(name):
+    html = PAGES[name]
+    assert 'id="howto-card"' in html
+    # every artifact class the converter can emit needs a documented route out
+    assert "/platform/document/v1/documents" in html      # dashboards
+    assert "/api/v2/settings/objects" in html             # detectors, pipelines, windows
+    assert "terraform apply" in html                      # tf modules
+    # and the scopes, because a 403 with no scope named is the usual first failure
+    assert "document:documents:write" in html
+    assert "settings:objects:write" in html
+    # OpenPipeline needs OAuth, not an API token — the easiest thing to get wrong
+    assert "DT_CLIENT_ID" in html and "openpipeline:configurations:read" in html
+
+
+@pytest.mark.parametrize("name", sorted(PAGES))
+def test_deployment_order_is_stated(name):
+    html = PAGES[name]
+    assert "Order matters" in html
+    assert "pipelines create the fields the tiles query" in html
+
+
+def test_browser_page_explains_why_it_cannot_push():
+    html = PAGES["browser"]
+    assert "Why this page will not push for you" in html
+    # both halves of the answer: the trust argument and the technical one
+    assert "public web page is the wrong place" in html
+    assert "cross-origin" in html
+    # and where the connected steps actually live
+    assert "127.0.0.1" in html
+
+
+def test_local_page_points_at_its_own_deploy_panel():
+    html = PAGES["local"]
+    # the local GUI can push, so it must not repeat the browser's refusal
+    assert "Why this page will not push for you" not in html
+    assert "pushed" in html and "deploy panel" in html
+
+
+@pytest.mark.parametrize("name", sorted(PAGES))
+def test_no_duplicate_tab_styling_rules(name):
+    """A leftover `.tab` block silently overrode the tab styling once already."""
+    html = PAGES[name]
+    blocks = re.findall(r"^\s*\.tab\s*\{", html, re.M)
+    assert len(blocks) == 1, f"{name}: {len(blocks)} competing .tab rules"
+    views = re.findall(r"^\s*\.view\s*\{", html, re.M)
+    assert not views, f"{name}: dead .view rule left behind"

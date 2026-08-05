@@ -44,8 +44,14 @@ PRODUCT_OF_KIND = {
     "appd_health_rule": "appdynamics", "appd_dashboard": "appdynamics",
     "appd_inventory": "appdynamics", "appd_policies": "appdynamics",
     "appd_infopoints": "appdynamics", "appd_datacollectors": "appdynamics",
-    "appd_txn_rules": "appdynamics",
+    "appd_txn_rules": "appdynamics", "appd_service_endpoints": "appdynamics",
+    "appd_backends": "appdynamics", "appd_db_collectors": "appdynamics",
+    "appd_schedules": "appdynamics",
 }
+
+# AppD kinds handled by the instrumentation guidance path.
+_APPD_INSTRUMENTATION = ("appd_infopoints", "appd_datacollectors", "appd_txn_rules",
+                         "appd_service_endpoints", "appd_backends", "appd_db_collectors")
 
 
 def product_of(kind: str) -> str:
@@ -142,6 +148,9 @@ def _appd_kind(doc) -> Optional[str]:
     from e2d.appd.policies import looks_like_policy_export
     if looks_like_policy_export(doc):
         return "appd_policies"
+    from e2d.appd.schedules import looks_like_schedules
+    if looks_like_schedules(doc):
+        return "appd_schedules"
     from e2d.appd.instrumentation import detect_kind
     instr = detect_kind(doc)
     if instr:
@@ -605,6 +614,25 @@ def _do_appd_instrumentation(text: str, src: str, out: Path, kind: str,
                               res.report.format_deduped()))
 
 
+def _do_appd_schedules(text: str, src: str, out: Path, summary: MigrationSummary,
+                       emit: str = "both") -> None:
+    """AppD schedules -> Dynatrace maintenance windows (Settings API bodies)."""
+    from e2d.appd.schedules import translate_schedules, render_schedules
+
+    res = translate_schedules(text)
+    mdir = out / "maintenance"
+    mdir.mkdir(parents=True, exist_ok=True)
+    base = Path(src).stem
+    (mdir / f"{base}.md").write_text(render_schedules(res, source=src), encoding="utf-8")
+    outs = [f"maintenance/{base}.md"]
+    if res.windows:
+        (mdir / f"{base}.windows.json").write_text(
+            json.dumps(res.windows, indent=2) + "\n", encoding="utf-8")
+        outs.append(f"maintenance/{base}.windows.json")
+    summary.items.append(Item("maintenance", src, _status(res.report), outs,
+                              res.report.format_deduped()))
+
+
 def _do_appd_policies(text: str, src: str, out: Path, summary: MigrationSummary) -> None:
     from e2d.appd.policies import translate_policies, render_policy_plan
 
@@ -865,8 +893,10 @@ def run_migration(in_dir: str, out_dir: str, config: Optional[MappingConfig] = N
                 _do_appd_inventory(text, rel, out, summary)
             elif kind == "appd_policies":
                 _do_appd_policies(text, rel, out, summary)
-            elif kind in ("appd_infopoints", "appd_datacollectors", "appd_txn_rules"):
+            elif kind in _APPD_INSTRUMENTATION:
                 _do_appd_instrumentation(text, rel, out, kind, summary)
+            elif kind == "appd_schedules":
+                _do_appd_schedules(text, rel, out, summary, emit)
             else:
                 summary.skipped.append(f"{rel} — {_skip_reason(path)}")
         except Exception as e:  # one bad file never aborts the whole migration

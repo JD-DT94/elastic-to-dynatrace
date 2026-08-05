@@ -24,11 +24,17 @@ from e2d.report import Report
 INFO_POINTS = "appd_infopoints"
 DATA_COLLECTORS = "appd_datacollectors"
 TXN_RULES = "appd_txn_rules"
+SERVICE_ENDPOINTS = "appd_service_endpoints"
+BACKENDS = "appd_backends"
+DB_COLLECTORS = "appd_db_collectors"
 
 KIND_TITLE = {
     INFO_POINTS: "Information points",
     DATA_COLLECTORS: "Data collectors",
     TXN_RULES: "Transaction detection rules",
+    SERVICE_ENDPOINTS: "Service endpoints",
+    BACKENDS: "Backends and remote services",
+    DB_COLLECTORS: "Database collectors",
 }
 
 
@@ -84,6 +90,18 @@ def detect_kind(doc: Any):
             _get(probe, "entryPointType") is not None
             or _get(probe, "txMatchRule") is not None):
         return TXN_RULES
+    if _get(probe, "collectorType") is not None or (
+            _get(probe, "collectorDefinition") is not None):
+        return DB_COLLECTORS
+    if _get(probe, "exitPointType") is not None or (
+            _get(probe, "backendName") is not None):
+        return BACKENDS
+    # a service endpoint carries its own type plus a tier binding; without the
+    # tier it is too close to a plain named record to claim confidently
+    if _get(probe, "serviceEndpointType") is not None or (
+            _get(probe, "sepType") is not None
+            and _get(probe, "tierName", "tierId") is not None):
+        return SERVICE_ENDPOINTS
     return None
 
 
@@ -124,6 +142,25 @@ def translate_instrumentation(text_or_doc, kind: str) -> InstrumentationResult:
             "Detection rules exported through the API cannot be imported through the AppD "
             "UI and vice versa, so if this export looks short compared with the UI, you are "
             "probably missing the inactive rules rather than looking at the full set.")
+    elif kind == SERVICE_ENDPOINTS:
+        res.report.info(
+            f"{n or 'Some'} service endpoint(s) found. Dynatrace detects every endpoint on a "
+            "service automatically and has no per-application quota, so there is nothing to "
+            "recreate — this list is useful as a checklist for confirming the same endpoints "
+            "appear after instrumentation, not as configuration to port.")
+    elif kind == BACKENDS:
+        res.report.info(
+            f"{n or 'Some'} backend / remote service(s) found. Dynatrace discovers databases, "
+            "queues and outbound HTTP dependencies from trace data and builds the "
+            "dependency map itself. Use this list to verify the same dependencies show up "
+            "in Smartscape once agents are reporting.")
+    elif kind == DB_COLLECTORS:
+        res.report.warn(
+            f"{n or 'Some'} database collector(s) found. Dynatrace database monitoring is "
+            "configured differently — deep database visibility comes from the services "
+            "calling the database, with an extension where you need instance-level metrics. "
+            "Inventory the databases here, then decide per database whether the extension "
+            "is warranted.")
     return res
 
 
@@ -141,6 +178,15 @@ def render_instrumentation(res: InstrumentationResult, source: str = "") -> str:
                           "alternative where the service is already instrumented with OTel."),
         TXN_RULES: ("Automatic service detection, plus custom services where needed",
                     "Assume none are needed until a service fails to appear."),
+        SERVICE_ENDPOINTS: ("Service endpoints (detected automatically)",
+                            "Nothing to migrate. Keep the list as a post-instrumentation "
+                            "checklist."),
+        BACKENDS: ("Smartscape topology (detected automatically)",
+                   "Nothing to migrate. Keep the list to verify the dependency map."),
+        DB_COLLECTORS: ("Database monitoring via the calling services, plus an extension "
+                        "for instance-level metrics",
+                        "Decide per database whether instance-level metrics justify an "
+                        "extension."),
     }.get(res.kind, ("", ""))
 
     L += [f"**Lands in Dynatrace as:** {target[0]}", "", target[1], ""]
