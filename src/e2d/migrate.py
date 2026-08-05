@@ -27,14 +27,42 @@ _TEXTQ = (".txt",)
 # settings whose *values* are likely secrets — reported, never written to outputs.
 _SECRET_KEY = re.compile(r"(pass(word)?|secret|token|api[_-]?key|credential|private[_-]?key)", re.I)
 
+# Which source platform each artifact kind belongs to. Adding a platform means
+# adding its kinds here plus a probe in `classify` — the report, the skip
+# reasons and the GUI all read the product from this one place rather than
+# assuming everything came from Elastic.
+PRODUCTS = {"elastic": "Elastic", "appdynamics": "AppDynamics"}
+
+PRODUCT_OF_KIND = {
+    # Elastic
+    "kibana": "elastic", "esql": "elastic", "logstash": "elastic", "ingest": "elastic",
+    "querydsl": "elastic", "querytext": "elastic", "watcher": "elastic",
+    "alerting_rule": "elastic", "transform": "elastic", "slo": "elastic",
+    "ilm_policy": "elastic", "index_template": "elastic", "enrich_policy": "elastic",
+    "filebeat": "elastic", "heartbeat": "elastic", "metricbeat": "elastic",
+    # AppDynamics
+    "appd_health_rule": "appdynamics", "appd_dashboard": "appdynamics",
+    "appd_inventory": "appdynamics", "appd_policies": "appdynamics",
+}
+
+
+def product_of(kind: str) -> str:
+    """The source platform a classified kind belongs to ("" when unknown)."""
+    return PRODUCT_OF_KIND.get(kind, "")
+
+
+def product_label(product: str) -> str:
+    return PRODUCTS.get(product, product or "source")
+
 
 @dataclass
 class Item:
-    category: str          # dashboard | query | pipeline
+    category: str          # dashboard | query | pipeline | alert | onboarding | ...
     source: str            # input file (relative)
     status: str            # OK | REVIEW | MANUAL | ERROR
     outputs: List[str] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
+    product: str = ""      # source platform: elastic | appdynamics
 
 
 @dataclass
@@ -49,6 +77,15 @@ class MigrationSummary:
     pipeline_fields: Dict[str, List[str]] = field(default_factory=dict)   # source -> fields produced at ingest
     ilm_policies: Dict[str, Optional[int]] = field(default_factory=dict)  # policy -> retention days (None: no delete)
     template_patterns: Dict[str, List[str]] = field(default_factory=dict)  # template -> index patterns
+    # AppDynamics rollout sizing
+    appd_davis_covered: int = 0   # health rules built-in Davis already covers
+    appd_hosts: int = 0           # distinct hosts needing a OneAgent install
+    appd_nodes: int = 0           # AppD nodes those hosts carry
+
+    @property
+    def products(self) -> List[str]:
+        """Source platforms seen in this run, in first-seen order."""
+        return list(dict.fromkeys(it.product for it in self.items if it.product))
 
     def counts(self):
         c = {"OK": 0, "REVIEW": 0, "MANUAL": 0, "ERROR": 0}
@@ -75,6 +112,37 @@ def _looks_like_kibana_ndjson(text: str) -> bool:
     return False
 
 
+def _appd_kind(doc) -> Optional[str]:
+    """Identify an AppDynamics export, or None.
+
+    Every probe keys off a structure Elastic never produces (`evalCriterias`,
+    `widgetTemplates`, `actionType`), so AppD and Elastic detection cannot
+    collide no matter which order they run in.
+    """
+    def _has(d, *keys):
+        return isinstance(d, dict) and any(k in d for k in keys)
+
+    probe = doc[0] if isinstance(doc, list) and doc and isinstance(doc[0], dict) else doc
+
+    if _has(probe, "evalCriterias", "evalCriteria"):
+        return "appd_health_rule"
+    # a health rule can also present as affects + name without criteria (list view)
+    if _has(probe, "affects") and _has(probe, "name") and not _has(probe, "widgetTemplates"):
+        return "appd_health_rule"
+    if _has(probe, "widgetTemplates", "dashboardWidgetTemplates"):
+        return "appd_dashboard"
+    if _has(probe, "widgets") and _has(probe, "name") and not _has(probe, "attributes"):
+        return "appd_dashboard"
+
+    from e2d.appd.policies import looks_like_policy_export
+    if looks_like_policy_export(doc):
+        return "appd_policies"
+    from e2d.appd.inventory import looks_like_inventory
+    if looks_like_inventory(doc):
+        return "appd_inventory"
+    return None
+
+
 def classify(path: Path, text: Optional[str] = None) -> str:
     suf = path.suffix.lower()
     if suf in _KIBANA:
@@ -97,10 +165,13 @@ def classify(path: Path, text: Optional[str] = None) -> str:
         if isinstance(doc, list):
             if doc and all(isinstance(o, dict) and "type" in o and "attributes" in o for o in doc):
                 return "kibana"
-            return "unknown"
+            return _appd_kind(doc) or "unknown"
         if isinstance(doc, dict):
             if "type" in doc and "attributes" in doc:
                 return "kibana"
+            appd = _appd_kind(doc)
+            if appd:
+                return appd
             if "rule_type_id" in doc:
                 return "alerting_rule"
             if "trigger" in doc and "input" in doc:
@@ -372,6 +443,148 @@ def _do_alert(text: str, src: str, out: Path, config: MappingConfig, summary: Mi
     summary.items.append(Item("alert", src, _status(res.report), outs, notes))
 
 
+def _safe_stem(name: str) -> str:
+    keep = "".join(c if (c.isalnum() or c in " -_.,()[]&+") else "_" for c in str(name))
+    return re.sub(r"_+", "_", keep).strip() or "item"
+
+
+def _do_appd_health_rule(text: str, src: str, out: Path, config: MappingConfig,
+                         summary: MigrationSummary, emit: str = "both") -> None:
+    """AppD health rules -> Davis anomaly detectors (reusing the alert pipeline)."""
+    from e2d.appd.health_rules import translate_health_rule, render_health_rule
+    from e2d.alerts.tf import render_detectors_tf, has_terraform
+
+    docs = json.loads(text)
+    if isinstance(docs, dict):
+        docs = [docs]
+    docs = [d for d in docs if isinstance(d, dict)]
+
+    base = Path(src).stem
+    adir = out / "alerts"
+    adir.mkdir(parents=True, exist_ok=True)
+    outs: List[str] = []
+    notes: List[str] = []
+    worst = "OK"
+    converted = covered = manual = 0
+    settings_bodies: List[dict] = []
+
+    for i, doc in enumerate(docs):
+        res = translate_health_rule(doc, name=f"{base}-{i + 1}")
+        stem = _safe_stem(res.spec.name) or f"{base}-{i + 1}"
+        (adir / f"{stem}.healthrule.md").write_text(render_health_rule(res), encoding="utf-8")
+        outs.append(f"alerts/{stem}.healthrule.md")
+        notes += res.report.format_deduped()
+        worst = _worst(worst, _status(res.report))
+
+        if res.classification == "covered-by-davis":
+            covered += 1
+        elif res.classification == "manual":
+            manual += 1
+        else:
+            converted += 1
+
+        if not has_terraform(res.spec):
+            continue
+        if emit in ("json", "both"):
+            from e2d.sinks.dynatrace import detector_settings_value, ANOMALY_SCHEMA
+            settings_bodies += [
+                {"schemaId": ANOMALY_SCHEMA, "scope": "environment",
+                 "value": detector_settings_value(res.spec.name, det)}
+                for det in res.spec.detectors]
+        if emit in ("tf", "both"):
+            tfdir = out / "alerts_tf" / stem
+            tfdir.mkdir(parents=True, exist_ok=True)
+            (tfdir / "main.tf").write_text(render_detectors_tf(res.spec), encoding="utf-8")
+            outs.append(f"alerts_tf/{stem}/")
+
+    if settings_bodies:
+        (adir / f"{base}.detectors.json").write_text(
+            json.dumps(settings_bodies, indent=2) + "\n", encoding="utf-8")
+        outs.append(f"alerts/{base}.detectors.json")
+
+    summary.appd_davis_covered += covered
+    if covered:
+        notes.append(
+            f"{covered} of {len(docs)} health rule(s) in this file compare against an AppD "
+            "baseline, which built-in Davis anomaly detection already does. They need no "
+            "migration — recreating them would duplicate coverage and add alert noise.")
+    if converted:
+        notes.append(f"{converted} rule(s) converted to Davis anomaly detector(s) with static "
+                     "thresholds carried across (units rescaled where AppD and Dynatrace differ).")
+    if manual:
+        notes.append(f"{manual} rule(s) need a manual rebuild — see the per-rule notes above.")
+
+    summary.items.append(Item("alert", src, worst, outs, notes))
+
+
+def _do_appd_dashboard(text: str, src: str, out: Path, config: MappingConfig,
+                       summary: MigrationSummary) -> None:
+    from e2d.appd.dashboards import convert_appd_dashboard, _safe_filename
+    from e2d.dashboards.field_audit import audit_dashboard_fields
+
+    content, report, title = convert_appd_dashboard(text, name=Path(src).stem)
+    ddir = out / "dashboards"
+    ddir.mkdir(parents=True, exist_ok=True)
+    stem = _safe_filename(title)
+    (ddir / f"{stem}.json").write_text(json.dumps(content, indent=2), encoding="utf-8")
+    outs = [f"dashboards/{stem}.json"]
+
+    try:
+        fields = audit_dashboard_fields({"name": title, "content": content})
+        if fields.get("custom"):
+            summary.dashboard_fields[src] = fields["custom"]
+    except Exception:
+        pass
+
+    summary.items.append(Item("dashboard", src, _status(report), outs,
+                              report.format_deduped()))
+
+
+def _do_appd_inventory(text: str, src: str, out: Path, summary: MigrationSummary) -> None:
+    from e2d.appd.inventory import (translate_inventory, build_waves,
+                                    render_onboarding_plan, render_host_group_map)
+
+    res = translate_inventory(text)
+    inv = res.inventory
+    waves = build_waves(inv)
+
+    odir = out / "onboarding"
+    odir.mkdir(parents=True, exist_ok=True)
+    (odir / "ONBOARDING-PLAN.md").write_text(render_onboarding_plan(inv, waves), encoding="utf-8")
+    outs = ["onboarding/ONBOARDING-PLAN.md"]
+    if waves:
+        (odir / "waves.json").write_text(json.dumps(waves, indent=2) + "\n", encoding="utf-8")
+        outs.append("onboarding/waves.json")
+    host_map = render_host_group_map(inv)
+    if host_map.strip() not in ("[]", ""):
+        (odir / "host_groups.json").write_text(host_map, encoding="utf-8")
+        outs.append("onboarding/host_groups.json")
+
+    summary.appd_hosts += inv.host_count
+    summary.appd_nodes += inv.node_count
+    notes = res.report.format_deduped()
+    if inv.host_count:
+        notes.append(
+            f"{inv.node_count} AppD node(s) resolve to {inv.host_count} distinct host(s). "
+            "OneAgent installs once per host and instruments every process on it, so the "
+            f"rollout is {inv.host_count} installs across {len(waves)} wave(s).")
+    summary.items.append(Item("onboarding", src, _status(res.report), outs, notes))
+
+
+def _do_appd_policies(text: str, src: str, out: Path, summary: MigrationSummary) -> None:
+    from e2d.appd.policies import translate_policies, render_policy_plan
+
+    res = translate_policies(text)
+    ndir = out / "notifications"
+    ndir.mkdir(parents=True, exist_ok=True)
+    base = Path(src).stem
+    (ndir / f"{base}.notifications.md").write_text(
+        render_policy_plan(res, source=src), encoding="utf-8")
+    summary.items.append(Item("notification", src, _status(res.report),
+                              [f"notifications/{base}.notifications.md"],
+                              res.report.format_deduped()))
+
+
 def _do_beat(text: str, src: str, out: Path, kind: str, summary: MigrationSummary) -> None:
     from e2d.yamlite import parse as yparse
     from e2d.beats import (translate_filebeat, translate_heartbeat,
@@ -587,8 +800,10 @@ def run_migration(in_dir: str, out_dir: str, config: Optional[MappingConfig] = N
         except (OSError, UnicodeDecodeError):
             continue
         kind = classify(path, text)
-        if kind in ("logstash", "ingest", "querydsl", "watcher", "alerting_rule"):
+        if kind in ("logstash", "ingest", "querydsl", "watcher", "alerting_rule",
+                    "appd_policies", "appd_health_rule"):
             _scan_secrets(text, rel, summary)
+        before = len(summary.items)
         try:
             if kind == "kibana":
                 _do_kibana(text, rel, out, config, summary)
@@ -606,12 +821,26 @@ def run_migration(in_dir: str, out_dir: str, config: Optional[MappingConfig] = N
                 _do_transform(text, rel, out, config, summary)
             elif kind in ("ilm_policy", "index_template", "enrich_policy"):
                 _do_config_advice(text, rel, kind, out, summary)
+            elif kind == "appd_health_rule":
+                _do_appd_health_rule(text, rel, out, config, summary, emit)
+            elif kind == "appd_dashboard":
+                _do_appd_dashboard(text, rel, out, config, summary)
+            elif kind == "appd_inventory":
+                _do_appd_inventory(text, rel, out, summary)
+            elif kind == "appd_policies":
+                _do_appd_policies(text, rel, out, summary)
             else:
                 summary.skipped.append(f"{rel} — {_skip_reason(path)}")
         except Exception as e:  # one bad file never aborts the whole migration
             summary.items.append(Item(kind, rel, "ERROR", [],
                                       [f"Conversion failed unexpectedly ({e}). Please report "
                                        "this file's shape — the rest of the migration continued."]))
+        # Tag whatever the handler appended with its source platform, so the
+        # report and GUI can say where each artifact came from without every
+        # handler having to thread the product through.
+        for produced in summary.items[before:]:
+            if not produced.product:
+                produced.product = product_of(kind)
 
     # log -> metric extraction guide, across every converted dashboard
     from e2d.dashboards.metrics_advisor import render_metrics_guide
@@ -647,7 +876,9 @@ _SKIP_REASONS = {
 def _skip_reason(path: Path) -> str:
     return _SKIP_REASONS.get(path.suffix.lower(),
                              "not a recognised Elastic artifact (dashboard export, query, "
-                             "pipeline, watcher/rule, transform, ILM/template/enrich policy)")
+                             "pipeline, watcher/rule, transform, ILM/template/enrich policy) "
+                             "or AppDynamics export (health rule, dashboard, "
+                             "application/tier/node inventory, policies/actions)")
 
 
 def render_report(summary: MigrationSummary) -> str:
@@ -655,12 +886,31 @@ def render_report(summary: MigrationSummary) -> str:
     total = len(summary.items)
     ready = c["OK"]
     attention = c["REVIEW"] + c["MANUAL"] + c["ERROR"]
-    L: List[str] = ["# Elastic → Dynatrace migration report", ""]
+    products = summary.products
+    if products:
+        heading = " + ".join(product_label(p) for p in products)
+    else:
+        heading = "Elastic"
+    L: List[str] = [f"# {heading} → Dynatrace migration report", ""]
     L.append(f"We looked at your export and converted **{total}** item(s): "
              f"**{ready} ready to use**, **{attention} need a quick human check**.")
     L.append("")
     L.append("Everything ran **on this machine, offline**; none of your data left it.")
     L.append("")
+
+    if summary.appd_hosts or summary.appd_davis_covered:
+        L.append("## AppDynamics rollout sizing")
+        L.append("")
+        if summary.appd_hosts:
+            L.append(f"- **{summary.appd_nodes} AppD node(s) resolve to {summary.appd_hosts} "
+                     f"host(s).** OneAgent installs once per host and instruments every process "
+                     f"on it, so the deployment is sized by host, not by application or node. "
+                     f"See `onboarding/ONBOARDING-PLAN.md` for the wave plan.")
+        if summary.appd_davis_covered:
+            L.append(f"- **{summary.appd_davis_covered} health rule(s) need no migration at "
+                     f"all** — they compare against an AppD baseline, which built-in Davis "
+                     f"anomaly detection already does automatically.")
+        L.append("")
     from e2d.score import build_scorecard, render_scorecard_md
     L.extend(render_scorecard_md(build_scorecard(summary)))
     L.append("| Status | Meaning |")

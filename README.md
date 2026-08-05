@@ -1,13 +1,14 @@
-# elastic-to-dynatrace (`e2d`)
+# migration assist (`e2d`)
 
-Convert Elastic / Kibana artifacts into Dynatrace equivalents: dashboards,
-alerts, ingest pipelines, transforms, and queries.
+Convert **Elastic / Kibana** and **AppDynamics** artifacts into Dynatrace
+equivalents: dashboards, alerts, ingest pipelines, transforms, queries — and,
+for AppDynamics, a OneAgent onboarding plan sized by host.
 
 ## Use it in the browser (nothing to install)
 
 **https://jd-dt94.github.io/elastic-to-dynatrace/**
 
-Drag a Kibana export onto the page, click **Convert**, download the results.
+Drag an export onto the page, click **Convert**, download the results.
 Everything runs inside your browser tab (Python compiled to WebAssembly) —
 your files are never uploaded anywhere.
 
@@ -26,6 +27,30 @@ your files are never uploaded anywhere.
 | Filebeat configs (`filebeat.yml`) | OpenTelemetry Collector configs shipping to Dynatrace |
 | Heartbeat monitors (`heartbeat.yml`) | Dynatrace Synthetic HTTP monitor definitions |
 | ILM policies, index templates, enrich policies | Migration guides (bucket retention, routing, lookups) + `CUTOVER-PLAN.md` |
+
+### AppDynamics
+
+| Input | Output |
+|-------|--------|
+| Application / tier / node inventory (`/controller/rest/applications/{app}/nodes`) | `ONBOARDING-PLAN.md` — OneAgent rollout waves sized by **host**, host-group and tagging design, `waves.json` + `host_groups.json` |
+| Health rules (`/controller/alerting/rest/v1/.../health-rules`) | Davis anomaly detectors (Settings JSON or Terraform), with AppD units rescaled |
+| Custom dashboards (`CustomDashboardImportExportServlet`) | Dynatrace dashboard JSON with DQL tiles |
+| Policies and actions (`/controller/policies`, `/controller/actions`) | Notification plan (problem notifications / Workflow tasks) |
+
+Three AppD-specific behaviours worth knowing, because they are where a naive
+converter goes silently wrong:
+
+- **Units are rescaled.** AppD reports response time in milliseconds; the Grail
+  metric `dt.service.request.response_time` is in microseconds. A 2000 ms
+  threshold becomes 2000000, and the conversion is stated in the report.
+- **Baseline health rules are not converted.** A rule comparing against an AppD
+  baseline has no static threshold to carry across. Inventing one produces a
+  detector that deploys cleanly and watches the wrong thing, so these are
+  reported as already covered by built-in Davis anomaly detection.
+- **Nothing is entity-scoped automatically.** AppD scopes by application/tier/BT
+  name and there is no reliable offline mapping to Dynatrace entities. Converted
+  detectors and tiles carry their original AppD scope as a note for a human to
+  apply, rather than a guessed filter that would match nothing.
 
 Every run also produces a plain-English `MIGRATION_REPORT.md` with a
 deployment-order plan, per-dashboard field manifests (`*.fields.md`

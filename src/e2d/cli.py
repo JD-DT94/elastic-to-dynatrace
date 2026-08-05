@@ -336,7 +336,9 @@ def cmd_web(args: argparse.Namespace) -> int:
 # --------------------------------------------------------------------------- #
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="e2d", description="Convert Elastic artifacts to Dynatrace.")
+    p = argparse.ArgumentParser(
+        prog="e2d",
+        description="Convert Elastic and AppDynamics artifacts to Dynatrace.")
     sub = p.add_subparsers(dest="command", required=True)
 
     c = sub.add_parser("convert", help="Translate one ES|QL file (or - for stdin) to DQL.")
@@ -396,8 +398,11 @@ def build_parser() -> argparse.ArgumentParser:
     pl.set_defaults(func=cmd_pipeline)
 
     m = sub.add_parser("migrate",
-                       help="One-shot: point at a folder of Elastic exports, convert everything, write a report.")
-    m.add_argument("input", help="Folder containing Elastic exports (.ndjson/.esql/.conf/.json/.txt)")
+                       help="One-shot: point at a folder of Elastic or AppDynamics exports, "
+                            "convert everything, write a report.")
+    m.add_argument("input", help="Folder of exports — Elastic (.ndjson/.esql/.conf/.json/.txt) "
+                                 "and/or AppDynamics (health rules, dashboards, "
+                                 "application/tier/node inventory, policies/actions as .json)")
     m.add_argument("-o", "--output", required=True, help="Output directory for converted artifacts + report")
     m.add_argument("--config", help="Mapping config JSON")
     m.add_argument("--emit", choices=["json", "tf", "both"], default="both",
@@ -443,7 +448,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Assessment-only: convert to a scratch dir, print the scorecard and "
              "per-category table, keep nothing. Exit 0 = clean, 2 = manual work "
              "present, 1 = converter errors; suits CI gates.")
-    ax.add_argument("input", help="Folder containing Elastic exports")
+    ax.add_argument("input", help="Folder containing Elastic and/or AppDynamics exports")
     ax.add_argument("--json", help="Write the machine-readable report to this file")
     ax.add_argument("--config", help="Mapping config JSON")
     ax.set_defaults(func=cmd_assess)

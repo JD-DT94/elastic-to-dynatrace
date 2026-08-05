@@ -83,9 +83,11 @@ def report_payload(summary) -> dict:
         "tool": "e2d",
         "scorecard": build_scorecard(summary),
         "counts": summary.counts(),
+        "products": getattr(summary, "products", []),
         "items": [{"category": it.category, "source": it.source,
                    "status": it.status,
                    "outcome": OUTCOME.get(it.status, "manual"),
+                   "product": getattr(it, "product", ""),
                    "outputs": it.outputs, "notes": it.notes}
                   for it in summary.items],
         "skipped": summary.skipped,

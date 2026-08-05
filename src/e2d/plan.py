@@ -60,6 +60,16 @@ def build_plan(summary) -> dict:
         if items:
             steps.append({"title": title, "why": why, "how": how, "items": items})
 
+    # OneAgent first: nothing downstream — no service, no metric, no detector —
+    # exists in Dynatrace until an agent is reporting from the host.
+    step("Deploy OneAgent to the hosts",
+         "Dynatrace derives services, metrics and topology from agent data. Until "
+         "OneAgent is on a host and its processes have restarted, every dashboard "
+         "and detector built from its AppD config has nothing to read.",
+         "Work through onboarding/ONBOARDING-PLAN.md wave by wave, installing with "
+         "the dynatrace.oneagent Ansible collection and the host group named per "
+         "wave. Containerised workloads need the Dynatrace Operator instead.",
+         by_cat.get("onboarding", []))
     step("Storage & routing decisions",
          "Bucket retention and OpenPipeline routing decide where data lands and "
          "how long it lives. Settle them before logs start flowing.",
@@ -129,6 +139,13 @@ def build_plan(summary) -> dict:
          "fires false alarms. Review each threshold and window first.",
          alert_how,
          by_cat.get("alert", []))
+    step("Route the notifications",
+         "Detectors that nobody is told about are worse than no detectors. Wire "
+         "routing once the alerts above are validated and no longer noisy.",
+         "Follow each notifications/<name>.notifications.md: recreate the channels "
+         "as problem notifications or Workflow tasks, storing any webhook auth as a "
+         "Dynatrace credential.",
+         by_cat.get("notification", []))
     if getattr(summary, "metrics_advisories", 0):
         steps.append({"title": "Optimise: extract metrics",
                       "why": "The busiest tiles are cheaper, faster and retained "

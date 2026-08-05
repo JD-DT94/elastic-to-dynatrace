@@ -645,6 +645,7 @@ PAGE = r"""<!DOCTYPE html>
   .steps h3 { display:flex; align-items:center; flex-wrap:wrap; gap:4px; }
   .map-h { margin:0 0 6px; font-size:14.5px; }
   .egrow { margin-top:12px; display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  .egsep { margin-left:8px; font-size:12px; font-weight:600; color:var(--faint); }
   .egchip { margin:0; padding:5px 12px; font-size:12px; font-weight:600;
             background:transparent; border:1px solid var(--line2); color:var(--mut);
             border-radius:999px; box-shadow:none; }
@@ -701,17 +702,17 @@ PAGE = r"""<!DOCTYPE html>
 <body>
 <header class="top">
   <div class="bar">
-    <span class="logo"><span class="mark">e2d</span> elastic-to-dynatrace</span>
+    <span class="logo"><span class="mark">e2d</span> migration assist</span>
 
     <span class="local">localhost only, nothing leaves this machine</span>
   </div>
 </header>
 <main class="wrap">
   <div class="hero">
-    <h1>Elastic &#8594; Dynatrace</h1>
-    <p class="tagline">Drop your exports, a <code>.zip</code> or individual
-       <code>.ndjson&nbsp;.esql&nbsp;.conf&nbsp;.json&nbsp;.txt</code> files, and get
-       dashboards, DQL, alerts and OpenPipeline configs.
+    <h1>Elastic &amp; AppDynamics &#8594; Dynatrace</h1>
+    <p class="tagline">Drop your exports, a <code>.zip</code> or individual files and get
+       dashboards, DQL, alerts, OpenPipeline configs and — for AppDynamics — a
+       OneAgent onboarding plan sized by host.
        <strong>Everything runs on this machine.</strong> Nothing is uploaded anywhere.</p>
   </div>
 
@@ -723,8 +724,10 @@ PAGE = r"""<!DOCTYPE html>
         <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
       </svg>
       <strong>Drop files here</strong> or click to choose
-      <p class="note" style="margin:6px 0 0">Kibana dashboards &middot; ES|QL &middot; Query DSL
-         &middot; KQL/Lucene &middot; Logstash &middot; ingest pipelines</p>
+      <p class="note" style="margin:6px 0 0"><b>Elastic</b> Kibana dashboards &middot; ES|QL
+         &middot; Query DSL &middot; KQL/Lucene &middot; Logstash &middot; watchers<br>
+         <b>AppDynamics</b> health rules &middot; dashboards &middot; app/tier/node inventory
+         &middot; policies &amp; actions</p>
       <input type="file" id="picker" multiple class="hide">
     </div>
     <div class="egrow note">Try an example:
@@ -737,6 +740,10 @@ PAGE = r"""<!DOCTYPE html>
       <button class="egchip" data-eg="shipper">filebeat</button>
       <button class="egchip" data-eg="synthetic">heartbeat</button>
       <button class="egchip" data-eg="config">ILM</button>
+      <span class="egsep">AppD:</span>
+      <button class="egchip" data-eg="appdrule">health rules</button>
+      <button class="egchip" data-eg="appddash">dashboard</button>
+      <button class="egchip" data-eg="appdinv">inventory</button>
     </div>
     <ul class="files" id="filelist"></ul>
     <div class="conn">
@@ -925,6 +932,39 @@ PAGE = r"""<!DOCTYPE html>
       <p>Heartbeat HTTP monitors <b>&#8594; Dynatrace Synthetic monitor definitions</b>;
          TCP and ICMP checks are flagged for network availability monitors.</p>
     </div>
+    <div class="feat">
+      <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/>
+        <line x1="12" y1="17" x2="12" y2="21"/></svg></div>
+      <h3>AppD onboarding plan</h3>
+      <p>Application/tier/node inventory <b>&#8594; a OneAgent rollout sized by host</b>.
+         AppD needs an agent per process; OneAgent installs once per host and instruments
+         everything on it — so the plan dedupes nodes to hosts, batches them into waves and
+         carries the AppD identity across as host groups and tags.</p>
+    </div>
+    <div class="feat">
+      <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/>
+        <path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></div>
+      <h3>AppD health rules</h3>
+      <p>Static-threshold rules <b>&#8594; Davis anomaly detectors</b> with units rescaled
+         (AppD reports milliseconds where Dynatrace uses microseconds). Baseline rules are
+         reported as <b>already covered</b> by built-in Davis rather than converted &mdash;
+         porting them would duplicate coverage and add noise.</p>
+    </div>
+    <div class="feat">
+      <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/>
+        <rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg></div>
+      <h3>AppD dashboards &amp; actions</h3>
+      <p>Custom dashboard widgets <b>&#8594; DQL tiles</b> with metric paths mapped to Grail
+         keys; policies and actions <b>&#8594; a notification plan</b>. Diagnostic-capture
+         actions are called out as needing no equivalent &mdash; Dynatrace captures
+         continuously.</p>
+    </div>
   </div>
   <p class="alsonote">Every run also writes <code>MIGRATION_REPORT.md</code> with a
      deployment-order plan, a field manifest per dashboard (<code>*.fields.md</code>),
@@ -948,6 +988,16 @@ PAGE = r"""<!DOCTYPE html>
           each anomaly detector before enabling it in production.</li>
       <li><strong>Canvas workpads and ML jobs have no converter.</strong> Unrecognised
           files are listed as skipped, with a reason.</li>
+      <li><strong>Converted AppD alerts and tiles are not entity-scoped.</strong> AppD scopes
+          by application/tier/business-transaction name, and there is no reliable offline
+          mapping to Dynatrace entities &mdash; a guessed filter would silently match nothing.
+          Each one carries its original AppD scope as a note; add the filter before enabling.</li>
+      <li><strong>The AppD dashboard widget schema is not publicly documented,</strong> so
+          widgets are read defensively. Anything unrecognised becomes a placeholder tile naming
+          the original widget type rather than disappearing.</li>
+      <li><strong>AppD history cannot be backfilled.</strong> Dynatrace rejects metric data
+          older than an hour, so before/after comparison means running both stacks over the
+          same window. Budget a dual-run period per wave.</li>
       <li><strong>Dynatrace rejects log records older than 24 hours,</strong> so history
           cannot be replayed as-is. <code>e2d backfill</code> re-stamps it and keeps the
           true event time in <code>original_timestamp</code>; <code>CUTOVER-PLAN.md</code>
@@ -1175,10 +1225,11 @@ function render(d) {
             <button data-collapse>Collapse all</button>
             <span class="note">Click a file to view & copy its converted output.</span>
           </div>`;
-    const CATS = [["dashboard", "Dashboards"], ["query", "Queries"],
-      ["pipeline", "Pipelines"], ["alert", "Alerts & watchers"], ["slo", "SLOs"],
-      ["shipper", "Shippers"], ["synthetic", "Synthetic monitors"],
-      ["transform", "Transforms"], ["config", "Cluster config"]];
+    const CATS = [["onboarding", "OneAgent onboarding"], ["dashboard", "Dashboards"],
+      ["query", "Queries"], ["pipeline", "Pipelines"], ["alert", "Alerts & health rules"],
+      ["slo", "SLOs"], ["shipper", "Shippers"], ["synthetic", "Synthetic monitors"],
+      ["transform", "Transforms"], ["notification", "Alert routing"],
+      ["config", "Cluster config"]];
     const known = new Set(CATS.map(c => c[0]));
     for (const [cat, title] of CATS) {
       const group = d.items.map((it, i) => [it, i]).filter(([it]) => it.category === cat);
@@ -1370,6 +1421,42 @@ const EXAMPLES = {
     text: 'filebeat.inputs:\n  - type: filestream\n    id: app-logs\n    paths:\n      - /var/log/app/*.log\n    multiline.pattern: \'^\\d{4}-\'\n    multiline.negate: true\n    multiline.match: after\noutput.elasticsearch:\n  hosts: ["es:9200"]\n' },
   synthetic: { file: "example_heartbeat.yml",
     text: 'heartbeat.monitors:\n  - type: http\n    id: api-check\n    name: API health\n    schedule: \'@every 60s\'\n    urls: ["https://api.example.com/health"]\n    check.response.status: [200]\n' },
+  appdrule: { file: "example_appd_health_rules.json",
+    text: JSON.stringify([
+      { id: 1, name: "Checkout response time too high", enabled: true,
+        useDataFromLastNMinutes: 30, waitTimeAfterViolation: 30, scheduleName: "Always",
+        affects: { affectedEntityType: "BUSINESS_TRANSACTION_PERFORMANCE" },
+        evalCriterias: { criticalCriteria: { conditionAggregationType: "ANY", conditions: [
+          { name: "ART", evalDetail: { evalDetailType: "SINGLE_METRIC",
+            metricPath: "Business Transaction Performance|Business Transactions|checkout|/cart|Average Response Time (ms)",
+            metricEvalDetail: { metricEvalDetailType: "SPECIFIC_TYPE",
+              compareCondition: "GREATER_THAN", compareValue: 2000 } } }] } } },
+      { id: 2, name: "Response time much higher than normal", enabled: true,
+        affects: { affectedEntityType: "BUSINESS_TRANSACTION_PERFORMANCE" },
+        evalCriterias: { criticalCriteria: { conditionAggregationType: "ANY", conditions: [
+          { name: "baseline ART", evalDetail: { metricPath: "Average Response Time (ms)",
+            metricEvalDetail: { metricEvalDetailType: "BASELINE_TYPE",
+              baselineCondition: "GREATER_THAN_BASELINE", baselineName: "All Data",
+              compareValue: 3, baselineUnit: "STANDARD_DEVIATIONS" } } }] } } }]) },
+  appddash: { file: "example_appd_dashboard.json",
+    text: JSON.stringify({ name: "Checkout health", width: 1200, widgetTemplates: [
+      { widgetType: "GraphWidget", title: "Response time", x: 0, y: 0, width: 600, height: 240,
+        dataSeriesTemplates: [{ name: "ART", metricMatchCriteriaTemplate: {
+          metricExpressionTemplate: {
+            metricPath: "Overall Application Performance|checkout|Average Response Time (ms)" } } }] },
+      { widgetType: "GraphWidget", title: "Calls per minute", x: 600, y: 0, width: 600, height: 240,
+        dataSeriesTemplates: [{ metricMatchCriteriaTemplate: { metricExpressionTemplate: {
+          metricPath: "Overall Application Performance|Calls per Minute" } } }] }] }) },
+  appdinv: { file: "example_appd_nodes.json",
+    text: JSON.stringify([
+      { id: 11, name: "node-a", tierName: "web", applicationName: "Checkout",
+        machineName: "host01", appAgentVersion: "23.1", type: "Java" },
+      { id: 12, name: "node-b", tierName: "web", applicationName: "Checkout",
+        machineName: "host01", appAgentVersion: "23.1", type: "Java" },
+      { id: 13, name: "node-c", tierName: "api", applicationName: "Checkout",
+        machineName: "host02", appAgentVersion: "23.1", type: "Java" },
+      { id: 14, name: "node-d", tierName: "core", applicationName: "Booking",
+        machineName: "host03", appAgentVersion: "23.1", type: "Java" }]) },
 };
 
 document.querySelectorAll("[data-eg]").forEach(b => b.addEventListener("click", () => {
